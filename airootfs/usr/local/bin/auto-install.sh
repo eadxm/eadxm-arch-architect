@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # =====================================================================
-#             FAIL-SAFE TELEMETRY AND ERROR TRAPPING ENGINE
+#              FAIL-SAFE TELEMETRY AND ERROR TRAPPING ENGINE
 # =====================================================================
 error_handler() {
     local exit_code=$1
     local line_number=$2
     echo -e "\n=========================================================="
-    echo "          🚨 CRITICAL FAULT DETECTED BY ARCHITECT 🚨       "
+    echo "         🚨 CRITICAL FAULT DETECTED BY ARCHITECT 🚨       "
     echo "=========================================================="
     echo "[FAULT] Command failed with exit code: $exit_code"
     echo "[LOCATION] Failed execution occurred on line: $line_number"
@@ -61,15 +61,15 @@ ISO_CACHE="/var/cache/pacman/pkg"
 GRUB_OS_PROBER="true"
 EFI_DIR="/boot"
 
-# Base system package matrix
-CORE_PKGS="base linux linux-firmware grub efibootmgr os-prober ntfs-3g networkmanager bluez bluez-utils blueman pipewire pipewire-pulse wireplumber brightnessctl flatpak"
+# Base system package matrix (Added 'sudo' and 'sddm' as base requirements)
+CORE_PKGS="base linux linux-firmware grub efibootmgr os-prober ntfs-3g networkmanager bluez bluez-utils blueman pipewire pipewire-pulse wireplumber brightnessctl flatpak xorg-server sddm sudo"
 
 # =====================================================================
-#             DYNAMIC HARDWARE DRIVE DETECTOR & PRE-FLIGHT
+#              DYNAMIC HARDWARE DRIVE DETECTOR & PRE-FLIGHT
 # =====================================================================
 clear
 echo "=========================================================="
-echo "               TARGET DISK SELECTION MODULE               "
+echo "                TARGET DISK SELECTION MODULE               "
 echo "=========================================================="
 echo "[INFO] Scanning for available block storage devices..."
 echo "----------------------------------------------------------"
@@ -97,7 +97,7 @@ else
 fi
 
 # =====================================================================
-#             NETWORK ENGAGEMENT ENGINE (ONLINE ONLY)
+#              NETWORK ENGAGEMENT ENGINE (ONLINE ONLY)
 # =====================================================================
 if [ "$INSTALL_MODE" == "1" ]; then
     while true; do
@@ -162,7 +162,7 @@ if [ "$INSTALL_MODE" == "1" ]; then
 fi
 
 # =====================================================================
-#             DRIVE HARDWARE STORAGE ARCHITECTURE SELECTOR
+#              DRIVE HARDWARE STORAGE ARCHITECTURE SELECTOR
 # =====================================================================
 clear
 echo "=========================================================="
@@ -272,11 +272,11 @@ case $USER_CHOICE in
 esac
 
 # =====================================================================
-#             ADAPTIVE COMPONENT SELECTION ENGINE
+#              ADAPTIVE COMPONENT SELECTION ENGINE
 # =====================================================================
 clear
 echo "=========================================================="
-echo "          STEP 3: CUSTOM SOFTWARE CONFIGURATION           "
+echo "          STEP 3: CUSTOM SOFTWARE CONFIGURATION            "
 echo "=========================================================="
 echo ""
 
@@ -344,7 +344,53 @@ elif lspci | grep -iq intel; then
 fi
 
 # =====================================================================
-#             HYBRID INSTALLATION EXECUTION MACHINE
+#             INJECTED: DESKTOP ENVIRONMENT SELECTION
+# =====================================================================
+echo ""
+echo "----------------------------------------------------------"
+echo "Select your primary Graphical Desktop Workspace:"
+echo " [1] Hyprland    (Modern, Hardware-Accelerated Tiling Manager)"
+echo " [2] KDE Plasma (Feature-Rich, Traditional, Familiar Desktop)"
+echo " [3] XFCE       (Lightweight, Ultra-Stable Core Matrix)"
+echo "----------------------------------------------------------"
+read -p "Enter Desktop choice (1-3): " DE_CHOICE
+
+case $DE_CHOICE in
+    1)
+        CORE_PKGS="$CORE_PKGS hyprland waybar kitty rofi-wayland xdg-desktop-portal-hyprland"
+        ;;
+    2)
+        CORE_PKGS="$CORE_PKGS plasma-desktop plasma-nm power-profiles-daemon kscreen"
+        ;;
+    3)
+        CORE_PKGS="$CORE_PKGS xfce4 xfce4-goodies"
+        ;;
+    *)
+        echo "[WARNING] Invalid selection. Defaulting installation layout to XFCE."
+        CORE_PKGS="$CORE_PKGS xfce4 xfce4-goodies"
+        ;;
+esac
+
+# =====================================================================
+#             INJECTED: ADMINISTRATIVE ACCOUNT CONFIGURATION
+# =====================================================================
+echo ""
+echo "----------------------------------------------------------"
+echo "            ADMINISTRATIVE USER ACCOUNT CREATION          "
+echo "----------------------------------------------------------"
+read -p "Enter new account username: " username
+
+if [ -z "$username" ]; then
+    username="eadxm_user"
+    echo "[INFO] Blind path detected. Defaulting account name to: $username"
+fi
+
+echo "Enter secure authentication password for $username:"
+read -s user_password
+echo ""
+
+# =====================================================================
+#              HYBRID INSTALLATION EXECUTION MACHINE
 # =====================================================================
 clear
 
@@ -357,6 +403,22 @@ else
     echo "[INFO] Deploying base operating matrix via NETWORK CONDUIT..."
     pacstrap -K $TARGET $CORE_PKGS
 fi
+
+# =====================================================================
+#             EXECUTE CHROOT PROFILE PROVISIONING USER MATRIX
+# =====================================================================
+echo "[INFO] Configuring user credentials and group management rules..."
+
+# Provision the user profile with standard interactive access configurations
+arch-chroot $TARGET useradd -m -G wheel -s /bin/bash "$username"
+echo "$username:$user_password" | arch-chroot $TARGET chpasswd
+echo "root:$user_password" | arch-chroot $TARGET chpasswd
+
+# Uncomment the standard administrative elevation parameter inside sudoers
+sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' $TARGET/etc/sudoers
+
+# Enable the graphical system architecture login screen on startup
+arch-chroot $TARGET systemctl enable sddm.service
 
 # Configure GRUB parameters safely
 echo "GRUB_DISABLE_OS_PROBER=$GRUB_OS_PROBER" >> $TARGET/etc/default/grub
