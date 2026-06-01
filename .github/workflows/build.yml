@@ -17,6 +17,10 @@ jobs:
 
       - name: Initialize System & Install Archiso
         run: |
+          # FIX: Initialize the Arch keyring to prevent PGP signature failures in Docker
+          pacman-key --init
+          pacman-key --populate archlinux
+
           # Ensure the host container has multilib active to avoid installation conflicts
           sed -i '/\[multilib\]/,+1 s/^#//' /etc/pacman.conf || true
           
@@ -28,15 +32,12 @@ jobs:
           # Copy the stock Arch template profile
           cp -r /usr/share/archiso/configs/releng/ ./build_profile
           
-          # FIX: Read the working host pacman.conf, strip comments out, and make sure extra and multilib are fully active
+          # Read the working host pacman.conf, strip comments out, and make sure extra and multilib are fully active
           sed -i '/\[extra\]/,+1 s/^#//' ./build_profile/pacman.conf || true
           sed -i '/\[multilib\]/,+1 s/^#//' ./build_profile/pacman.conf || true
           
           # Scrub invisible Windows formatting from the package list
           dos2unix packages.x86_64
-          
-          # Dynamic target patch: Swap nvidia to nvidia-open for modern repository naming
-          sed -i 's/^nvidia$/nvidia-open/g' packages.x86_64
           
           # Append your target package tree to the profile
           cat packages.x86_64 >> ./build_profile/packages.x86_64
@@ -49,6 +50,9 @@ jobs:
           
           # Grant execution privileges
           chmod +x ./build_profile/airootfs/usr/local/bin/auto-install.sh
+          
+          # FIX: Create the systemd targets directory BEFORE trying to symlink into it
+          mkdir -p ./build_profile/airootfs/etc/systemd/system/multi-user.target.wants/
           
           # Enable your custom automated setup service on bootup
           ln -s /etc/systemd/system/autoinstall.service ./build_profile/airootfs/etc/systemd/system/multi-user.target.wants/autoinstall.service
