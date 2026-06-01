@@ -663,7 +663,12 @@ if [ "$INSTALL_MODE" = "1" ]; then
 fi
 
 mkdir -p "$TARGET/etc/bluetooth"
-echo -e "\n[Policy]\nAutoEnable=true" >> "$TARGET/etc/bluetooth/main.conf"
+# PATCH: Safely modify Bluetooth auto-enable without creating duplicate blocks
+if [ -f "$TARGET/etc/bluetooth/main.conf" ]; then
+    sed -i 's/^#*AutoEnable=.*/AutoEnable=true/' "$TARGET/etc/bluetooth/main.conf" || true
+else
+    echo -e "[Policy]\nAutoEnable=true" > "$TARGET/etc/bluetooth/main.conf"
+fi
 
 echo "[INFO] Injecting terminal cosmetics..."
 cat << 'EOF' >> "$TARGET/home/$username/.bashrc"
