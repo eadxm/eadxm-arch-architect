@@ -30,14 +30,14 @@ error_handler() {
     echo "[INFO] Rebooting machine..."
     sleep 2
     reboot || true
-    exit "$exit_code"
+    exit $exit_code
 }
 
 trap 'error_handler $? $LINENO' ERR
 
 clear
 echo "=========================================================="
-echo "          EADXM'S AUTOMATED ARCH ARCHITECT v1.12.0        "
+echo "          EADXM'S AUTOMATED ARCH ARCHITECT v1.12.1        "
 echo "=========================================================="
 echo ""
 echo "Choose your connection architecture:"
@@ -63,7 +63,8 @@ ARCH_ROOT=""
 FLATPAK_APP=""
 
 # Base system package matrix 
-CORE_PKGS="base linux linux-firmware grub efibootmgr os-prober ntfs-3g networkmanager iwd bluez bluez-utils blueman pipewire pipewire-pulse wireplumber brightnessctl flatpak xorg-server sddm sudo zram-generator earlyoom reflector ttf-dejavu ttf-liberation noto-fonts noto-fonts-emoji systemd-timesyncd curl"
+# PATCH: Removed systemd-timesyncd (bundled in base/systemd)
+CORE_PKGS="base linux linux-firmware grub efibootmgr os-prober ntfs-3g networkmanager iwd bluez bluez-utils blueman pipewire pipewire-pulse wireplumber brightnessctl flatpak xorg-server sddm sudo zram-generator earlyoom reflector ttf-dejavu ttf-liberation noto-fonts noto-fonts-emoji curl"
 
 # =====================================================================
 #              DYNAMIC HARDWARE DRIVE DETECTOR & PRE-FLIGHT
@@ -561,6 +562,7 @@ else
         else
             echo -e "\n=========================================================="
             echo " [CRITICAL WARNING] Base installation failed!"
+            echo " This usually means your Wi-Fi/Ethernet dropped midway."
             echo "=========================================================="
             echo "Options: [1] Retry [2] Fix Terminal [3] Reboot"
             read -p "Select [1-3]: " FAIL_CHOICE
@@ -574,6 +576,7 @@ else
             fi
         fi
     done
+    
     trap 'error_handler $? $LINENO' ERR 
 fi
 
@@ -605,6 +608,7 @@ arch-chroot "$TARGET" locale-gen
 echo "LANG=en_US.UTF-8" > "$TARGET/etc/locale.conf"
 
 # --- SMART KEYBOARD INHERITANCE ---
+echo "[INFO] Syncing local keyboard layout..."
 LIVE_KEYMAP=$(localectl status 2>/dev/null | grep "VC Keymap" | awk '{print $3}')
 [ -z "$LIVE_KEYMAP" ] && LIVE_KEYMAP="us"
 printf 'KEYMAP=%s\n' "$LIVE_KEYMAP" > "$TARGET/etc/vconsole.conf"
@@ -612,6 +616,7 @@ printf 'KEYMAP=%s\n' "$LIVE_KEYMAP" > "$TARGET/etc/vconsole.conf"
 
 # --- DYNAMIC TIMEZONE ENGINE ---
 if [ "$INSTALL_MODE" = "1" ]; then
+    echo "[INFO] Auto-detecting system timezone via IP geolocation..."
     DETECTED_TZ=$(curl -s --max-time 3 https://ipapi.co/timezone 2>/dev/null || true)
     if [ -n "$DETECTED_TZ" ] && [ -f "/usr/share/zoneinfo/$DETECTED_TZ" ]; then
         arch-chroot "$TARGET" ln -sf "/usr/share/zoneinfo/$DETECTED_TZ" /etc/localtime
@@ -666,7 +671,6 @@ if [[ "$PERF_CHOICE" =~ ^[Yy]$ || -z "$PERF_CHOICE" ]]; then
     sed -i 's/#MAKEFLAGS="-j2"/MAKEFLAGS="-j$(nproc)"/' "$TARGET/etc/makepkg.conf"
     sed -i 's/^COMPRESSZST=.*/COMPRESSZST=(zstd -c -T0 -)/' "$TARGET/etc/makepkg.conf"
     
-    # PATCH: Portable printf-based config injection
     printf 'ParallelDownloads = 10\nColor\nILoveCandy\n' >> "$TARGET/etc/pacman.conf"
 
     cat <<EOF > "$TARGET/etc/systemd/zram-generator.conf"
@@ -683,20 +687,23 @@ EOF
         mkdir -p "$TARGET/etc/udev/rules.d"
         echo 'ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="bfq"' >> "$TARGET/etc/udev/rules.d/60-scheduler.rules"
     fi
+
+    if [ -f "/etc/udev/rules.d/90-backlight.rules" ]; then
+        mkdir -p "$TARGET/etc/udev/rules.d"
+        cp /etc/udev/rules.d/90-backlight.rules "$TARGET/etc/udev/rules.d/"
+    fi
 fi
 
 echo "GRUB_DISABLE_OS_PROBER=$GRUB_OS_PROBER" >> "$TARGET/etc/default/grub"
 
 echo "[INFO] Executing system hardware architecture validation routines..."
 if [ -d "/sys/firmware/efi" ]; then
-    # DYNAMIC PATH RESOLUTION
     [ -d "$TARGET/efi" ] && EFI_DIR="/efi" || EFI_DIR="/boot"
     arch-chroot "$TARGET" grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=ArchLinux --recheck
 else
     arch-chroot "$TARGET" grub-install --target=i386-pc "$TARGET_DRIVE" --recheck
 fi
 
-# OS-PROBER
 if [ "$GRUB_OS_PROBER" = "false" ]; then
     WIN_PART=$(lsblk -b -n -o NAME,FSTYPE | grep ntfs | awk '{print $1}' | xargs -I {} lsblk -b -n -o NAME,SIZE /dev/{} 2>/dev/null | sort -k2 -n -r | head -n 1 | awk '{print "/dev/"$1}') || true
     if [ -n "$WIN_PART" ]; then
@@ -727,7 +734,7 @@ Wants=network-online.target
 Type=simple
 ExecStartPre=/bin/sh -c 'until curl -sI https://flathub.org >/dev/null; do sleep 2; done'
 ExecStartPre=/usr/bin/flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-ExecStart=/bin/bash -c 'for i in {1..5}; do /usr/bin/flatpak install flathub $FLATPAK_APP -y && break || sleep 15; done; /usr/bin/systemctl disable architect-flatpak.service'
+ExecStart=/bin/bash -c 'for \$i in {1..5}; do /usr/bin/flatpak install flathub $FLATPAK_APP -y && break || sleep 15; done; /usr/bin/systemctl disable architect-flatpak.service'
 
 [Install]
 WantedBy=multi-user.target
