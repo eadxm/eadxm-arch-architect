@@ -3,6 +3,13 @@
 An automated, hyper-optimized Arch Linux deployment system built to turn a tedious multi-hour command-line install into a **3-minute, flawless deployment**. Written entirely in pure Bash, it dynamically scales based on your hardware, firmware, and connectivity.
 
 ---
+## 🧠 Smart Hardware Recognition Engine
+
+Unlike static installers, **Architect** evaluates your specific machine mid-deployment to ensure maximum performance and stability:
+* **Dynamic CPU Microcode:** Automatically detects Intel or AMD architecture and injects the proper silicon microcode (`intel-ucode` / `amd-ucode`) directly into the bootloader.
+* **Hybrid GPU Mapping:** Intelligently compiles drivers for simultaneous graphics arrays (e.g., Nvidia + Intel Optimus laptops) to prevent black-screen boot faults.
+* **Storage-Aware Tuning:** Scans disk topology to determine if your drive is solid-state or rotational. Automatically enables `fstrim.timer` for SSDs/NVMes, or applies the `bfq` IO Scheduler to maximize desktop smoothness on mechanical Hard Drives.
+* **Network Identity Binding:** Automatically generates strict localhost bindings to completely eliminate the infamous Arch Linux `sudo` network-hang bug.
 
 ## 🛠️ The Core Installation Pipeline
 
@@ -54,7 +61,7 @@ During installation, the engine will prompt you to choose your interface footpri
 The menu will guide you through three instant steps:
 1. **Connection Architecture:** Select **Online Mode** to sync the absolute newest package pools over Wi-Fi, or **Offline Mode** to deploy air-gapped without an internet link.
 2. **Storage Provisioning:** Choose **Dual-Boot** to safely carve space alongside Windows, **Hard Nuke** to clean-wipe the entire drive, or **Target Nuke** to cleanly dissolve just your Windows `C:` drive partition.
-3. **Software Configuration:** Pick your favorite web browser (Firefox, Chromium, Zen, or Brave) and choose your preferred Desktop Workspace environment.
+3. **Identity & Software:** Name your machine, pick your favorite web browser (Firefox, Chromium, Zen, or Brave), and choose your preferred Desktop Workspace environment.
 
 ---
 
