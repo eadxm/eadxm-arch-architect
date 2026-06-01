@@ -137,12 +137,17 @@ if [ "$INSTALL_MODE" == "1" ]; then
             fi
         fi
         
-        # Request password and attempt connection safely
-        read -s -p "Enter Wi-Fi Password: " WIFI_PASS
+        # PATCHED: Read raw password strings safely to prevent special character escaping & support Open Wi-Fi
+        read -r -s -p "Enter Wi-Fi Password (leave blank for Open Network): " WIFI_PASS
         echo -e "\n\n[INFO] Authenticating and linking with $WIFI_SSID..."
         
-        # Explicitly passing password arguments cleanly to stop CLI hanging
-        if nmcli device wifi connect "$WIFI_SSID" password "$WIFI_PASS" &>/dev/null; then
+        if [ -z "$WIFI_PASS" ]; then
+            nmcli device wifi connect "$WIFI_SSID" &>/dev/null
+        else
+            nmcli device wifi connect "$WIFI_SSID" password "$WIFI_PASS" &>/dev/null
+        fi
+        
+        if [ $? -eq 0 ]; then
             echo "[SUCCESS] Connected successfully! Internet connection established."
             sleep 2
             break
@@ -182,6 +187,15 @@ read -p "Enter your choice (1-5): " USER_CHOICE
 case $USER_CHOICE in
     1)
         echo "====== PROCEEDING WITH SAFE DUAL-BOOT CONFIGURATION ======"
+        # PATCHED: Unallocated Space Safety Interlock Check
+        echo -e "\n[WARNING] Dual-Boot requires pre-existing UNALLOCATED SPACE on your drive."
+        echo "If you did not manually shrink your Windows C: volume beforehand, ABORT NOW."
+        read -p "Do you have free unallocated space verified on $TARGET_DRIVE? (Type 'YES' to proceed): " SPACE_CHECK
+        if [ "$SPACE_CHECK" != "YES" ]; then
+            echo "[ABORT] Action canceled. Shrink your drive volume inside Windows first."
+            exit 1
+        fi
+
         WIN_EFI=$(lsblk -ln -o NAME,FSTYPE "$TARGET_DRIVE" | grep vfat | head -n 1 | awk '{print "/dev/"$1}')
         if [ -z "$WIN_EFI" ]; then
             echo "[ERROR] Unable to locate an existing Windows EFI layout. Aborting."
@@ -217,16 +231,13 @@ case $USER_CHOICE in
             EFI_DIR="/boot"
         else
             echo "[INFO] Environmental Check: Configuring LEGACY BIOS Partition Matrix (MBR)..."
-            # Fully purge existing GPT configurations to avoid alignment warnings
             sgdisk --zap-all "$TARGET_DRIVE" &>/dev/null || true
             
-            # Form single massive continuous MBR partition
             echo "label: dos" | sfdisk "$TARGET_DRIVE" &>/dev/null
             echo ", ," | sfdisk "$TARGET_DRIVE" --force &>/dev/null
             partprobe "$TARGET_DRIVE"
             sleep 2
             
-            # FIX: Standardize global variables to prevent target tracking failure
             ARCH_ROOT="${TARGET_DRIVE}${PART_PREFIX}1"
             mkfs.ext4 -F "$ARCH_ROOT"
             mount "$ARCH_ROOT" $TARGET
@@ -257,7 +268,6 @@ case $USER_CHOICE in
             mount "$ARCH_EFI" $TARGET/boot
             EFI_DIR="/boot"
         else
-            # FIX: Maintain initialization safety loops on non-EFI deployment profiles
             EFI_DIR="/boot"
         fi
         
@@ -270,7 +280,9 @@ case $USER_CHOICE in
         ;;
     4)
         echo "====== TARGET NUKE: HUNTING DOWN WINDOWS C: DRIVE ======"
-        C_DRIVE=$(blkid -o device -t TYPE=ntfs | head -n 1)
+        # PATCHED: Smart filtering to locate the LARGEST actual OS volume partition instead of small recovery sectors
+        C_DRIVE=$(lsblk -b -n -o NAME,FSTYPE "$TARGET_DRIVE" | grep ntfs | awk '{print $1}' | xargs -I {} lsblk -b -n -o NAME,SIZE /dev/{} 2>/dev/null | sort -k2 -n -r | head -n 1 | awk '{print "/dev/"$1}')
+        
         if [ -z "$C_DRIVE" ]; then
             lsblk "$TARGET_DRIVE" -o NAME,SIZE,TYPE,FSTYPE
             read -p "Please type the target Windows partition manually (e.g., /dev/sda2): " C_DRIVE
@@ -366,13 +378,22 @@ else
     esac
 fi
 
-# Automatically bundle matching hardware drivers to execution string
+# PATCHED: Removed conditional else-if chains to successfully load composite hybrid/optimus hardware layout drivers
 if lspci | grep -iq nvidia; then
     CORE_PKGS="$CORE_PKGS nvidia nvidia-utils"
-elif lspci | grep -iq amd; then
+fi
+if lspci | grep -iq amd; then
     CORE_PKGS="$CORE_PKGS xf86-video-amdgpu"
-elif lspci | grep -iq intel; then
+fi
+if lspci | grep -iq intel; then
     CORE_PKGS="$CORE_PKGS xf86-video-intel intel-media-driver"
+fi
+
+# PATCHED: Dynamically evaluate silicon matrix and inject appropriate microcode patches
+if grep -q "AuthenticAMD" /proc/cpuinfo; then
+    CORE_PKGS="$CORE_PKGS amd-ucode"
+elif grep -q "GenuineIntel" /proc/cpuinfo; then
+    CORE_PKGS="$CORE_PKGS intel-ucode"
 fi
 
 # =====================================================================
@@ -408,17 +429,23 @@ esac
 # =====================================================================
 echo ""
 echo "----------------------------------------------------------"
-echo "             ADMINISTRATIVE USER ACCOUNT CREATION          "
+echo "             SYSTEM IDENTITY & ACCOUNT CREATION            "
 echo "----------------------------------------------------------"
-read -p "Enter new account username: " username
+# PATCHED: Integrated machine network identity prompt mapping
+read -p "Enter a name for this computer (Hostname): " system_hostname
+if [ -z "$system_hostname" ]; then 
+    system_hostname="arch-architect"
+fi
 
+read -p "Enter new account username: " username
 if [ -z "$username" ]; then
     username="eadxm_user"
     echo "[INFO] Blind path detected. Defaulting account name to: $username"
 fi
 
 echo "Enter secure authentication password for $username:"
-read -s user_password
+# PATCHED: Added raw input -r flag to accurately record complex symbols/slashes
+read -r -s user_password
 echo ""
 
 # =====================================================================
@@ -446,6 +473,10 @@ arch-chroot $TARGET useradd -m -G wheel -s /bin/bash "$username"
 echo "$username:$user_password" | arch-chroot $TARGET chpasswd
 echo "root:$user_password" | arch-chroot $TARGET chpasswd
 
+# PATCHED: Structural definition of system networking loopbacks and host bindings
+echo "$system_hostname" > $TARGET/etc/hostname
+echo -e "127.0.0.1\tlocalhost\n::1\t\tlocalhost\n127.0.1.1\t$system_hostname.localdomain\t$system_hostname" > $TARGET/etc/hosts
+
 # Uncomment the standard administrative elevation parameter inside sudoers
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' $TARGET/etc/sudoers
 
@@ -453,6 +484,9 @@ sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' $TARGET/etc/sud
 echo "en_US.UTF-8 UTF-8" > $TARGET/etc/locale.gen
 arch-chroot $TARGET locale-gen
 echo "LANG=en_US.UTF-8" > $TARGET/etc/locale.conf
+
+# PATCHED: Hardlink localized UTC fallback to resolve downstream browser SSL/TLS certificate hangs
+arch-chroot $TARGET ln -sf /usr/share/zoneinfo/UTC /etc/localtime
 
 # Configure hardware clock to universal standard
 arch-chroot $TARGET hwclock --systohc
