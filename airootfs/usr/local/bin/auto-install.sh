@@ -542,6 +542,10 @@ if [ "$INSTALL_MODE" = "2" ]; then
     cp -n "$ISO_CACHE"/* "$TARGET/var/cache/pacman/pkg/" 2>/dev/null || true
     cp -r /var/lib/pacman/sync/* "$TARGET/var/lib/pacman/sync/" 2>/dev/null || true
     
+    # PATCH: Lobotomize pacstrap so it doesn't force an internet database sync in Offline Mode
+    sed -i 's/"--refresh"//g' /usr/bin/pacstrap
+    sed -i 's/-Sy/-S/g' /usr/bin/pacstrap
+    
     pacstrap -c -K "$TARGET" $CORE_PKGS
     
     mv /etc/pacman.d/mirrorlist.bak /etc/pacman.d/mirrorlist || true
