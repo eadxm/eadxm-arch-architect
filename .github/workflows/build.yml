@@ -40,7 +40,6 @@ jobs:
           dos2unix packages.x86_64
           
           # DYNAMIC PATCH 1: Swap 'nvidia' to 'nvidia-open' in the package list
-          # Using a looser regex to catch trailing spaces that broke the build last time
           sed -i 's/^nvidia[[:space:]]*$/nvidia-open/g' packages.x86_64
           
           # Append your target package tree to the profile
@@ -62,6 +61,11 @@ jobs:
 
           # PATCH: Mask the time-sync service to completely neutralize the 15-minute Live USB boot hang
           ln -sf /dev/null ./build_profile/airootfs/etc/systemd/system/systemd-time-wait-sync.service
+
+          # PATCH: Fix USB Descriptor error (-110 / -71) by injecting USB timing parameters into all ISO bootloaders
+          sed -i 's/archisobasedir/usbcore.old_scheme_first=1 usbcore.initial_descriptor_timeout=5000 archisobasedir/g' ./build_profile/syslinux/*.cfg || true
+          sed -i 's/archisobasedir/usbcore.old_scheme_first=1 usbcore.initial_descriptor_timeout=5000 archisobasedir/g' ./build_profile/efiboot/loader/entries/*.conf || true
+          sed -i 's/archisobasedir/usbcore.old_scheme_first=1 usbcore.initial_descriptor_timeout=5000 archisobasedir/g' ./build_profile/grub/grub.cfg || true
 
       - name: Compile Custom ISO Image
         run: |
