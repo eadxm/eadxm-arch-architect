@@ -55,17 +55,14 @@ jobs:
           # DYNAMIC PATCH 2: Swap the package name inside the Auto-Install script
           sed -i 's/ nvidia nvidia-utils/ nvidia-open nvidia-utils/g' ./build_profile/airootfs/usr/local/bin/auto-install.sh
           
-          # Grant absolute execution privileges to the script and the login hook
-          chmod +x ./build_profile/airootfs/usr/local/bin/auto-install.sh
-          chmod +x ./build_profile/airootfs/root/.zlogin || true
-
           # PATCH: Mask the time-sync service to completely neutralize the 15-minute Live USB boot hang
+          mkdir -p ./build_profile/airootfs/etc/systemd/system/
           ln -sf /dev/null ./build_profile/airootfs/etc/systemd/system/systemd-time-wait-sync.service
 
           # PATCH: Fix USB Descriptor error (-110 / -71) by injecting USB timing parameters into all ISO bootloaders
-          sed -i 's/archisobasedir/usbcore.old_scheme_first=1 usbcore.initial_descriptor_timeout=5000 archisobasedir/g' ./build_profile/syslinux/*.cfg || true
-          sed -i 's/archisobasedir/usbcore.old_scheme_first=1 usbcore.initial_descriptor_timeout=5000 archisobasedir/g' ./build_profile/efiboot/loader/entries/*.conf || true
-          sed -i 's/archisobasedir/usbcore.old_scheme_first=1 usbcore.initial_descriptor_timeout=5000 archisobasedir/g' ./build_profile/grub/grub.cfg || true
+          sed -i 's/archisolabel/usbcore.old_scheme_first=1 usbcore.initial_descriptor_timeout=5000 archisolabel/g' ./build_profile/syslinux/*.cfg || true
+          sed -i 's/archisolabel/usbcore.old_scheme_first=1 usbcore.initial_descriptor_timeout=5000 archisolabel/g' ./build_profile/efiboot/loader/entries/*.conf || true
+          sed -i 's/archisolabel/usbcore.old_scheme_first=1 usbcore.initial_descriptor_timeout=5000 archisolabel/g' ./build_profile/grub/grub.cfg || true
 
       - name: Compile Custom ISO Image
         run: |
