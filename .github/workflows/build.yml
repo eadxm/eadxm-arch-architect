@@ -64,6 +64,28 @@ jobs:
           sed -i 's/archisolabel/usbcore.old_scheme_first=1 usbcore.initial_descriptor_timeout=5000 archisolabel/g' ./build_profile/efiboot/loader/entries/*.conf || true
           sed -i 's/archisolabel/usbcore.old_scheme_first=1 usbcore.initial_descriptor_timeout=5000 archisolabel/g' ./build_profile/grub/grub.cfg || true
 
+      - name: Pre-Download Offline Cache & Chaotic-AUR
+        run: |
+          # 1. Setup Chaotic-AUR to access native LibreWolf and Brave inside the GitHub Runner
+          pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com
+          pacman-key --lsign-key 3056513887B78AEB
+          pacman -U 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst' --noconfirm
+          pacman -U 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst' --noconfirm
+          
+          # Inject repo into the GitHub Runner so it can download them
+          echo -e "\n[chaotic-aur]\nInclude = /etc/pacman.d/chaotic-mirrorlist" >> /etc/pacman.conf
+          
+          # Also inject it into the ISO's pacman.conf so the live USB knows about it during offline install
+          echo -e "\n[chaotic-aur]\nInclude = /etc/pacman.d/chaotic-mirrorlist" >> ./build_profile/pacman.conf
+          
+          pacman -Sy
+          
+          # 2. Create the hidden cache directory inside the ISO build profile
+          mkdir -p ./build_profile/airootfs/opt/offline_cache
+          
+          # 3. Download the entire matrix into the hidden cache so mkarchiso cannot delete it
+          pacman -Sw --cachedir ./build_profile/airootfs/opt/offline_cache --noconfirm base linux linux-firmware grub efibootmgr os-prober ntfs-3g networkmanager iwd bluez bluez-utils blueman pipewire pipewire-pulse wireplumber brightnessctl flatpak xorg-server sddm sudo zram-generator earlyoom reflector ttf-dejavu ttf-liberation noto-fonts noto-fonts-emoji curl chaotic-keyring chaotic-mirrorlist parted bc libreoffice-fresh qt5-wayland qt6-wayland firefox librewolf brave-bin amd-ucode intel-ucode nvidia-open nvidia-utils xf86-video-amdgpu intel-media-driver switcheroo-control hyprland waybar kitty rofi xdg-desktop-portal-hyprland polkit-kde-agent thunar gvfs plasma-desktop plasma-workspace plasma-nm power-profiles-daemon kscreen konsole dolphin ark kate spectacle discover packagekit-qt6 sddm-kcm xfce4 xfce4-goodies
+
       - name: Compile Custom ISO Image
         run: |
           mkdir -p ./output
