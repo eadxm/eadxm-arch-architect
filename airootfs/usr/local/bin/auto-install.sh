@@ -21,7 +21,8 @@ error_handler() {
     
     if [ "$FAULT_CHOICE" = "2" ]; then
         echo "[INFO] Handing over root bash console. Type 'exit' to return."
-        /bin/zsh || true
+        # Use --no-rcs to bypass .zlogin and avoid infinite loops
+        /bin/zsh --no-rcs || true
     fi
     
     umount -R /mnt &>/dev/null || true
@@ -233,8 +234,9 @@ case $USER_CHOICE in
             read -p "Could not auto-detect EFI. Enter Windows EFI path manually: " WIN_EFI
         fi
         
-        echo "[INFO] Mounting Windows EFI safely without formatting: $WIN_EFI"
+        echo "[INFO] Mounting Windows EFI safely: $WIN_EFI"
         mkdir -p "$TARGET/boot/efi"
+        fsck.fat -a "$WIN_EFI" || true # Bypass Windows Fast Startup dirty bit
         mount -t vfat "$WIN_EFI" "$TARGET/boot/efi"
         
         GRUB_OS_PROBER="true"
@@ -258,6 +260,7 @@ case $USER_CHOICE in
         if [ -z "$WIN_EFI" ]; then read -p "Enter Windows EFI path manually: " WIN_EFI; fi
         
         mkdir -p "$TARGET/boot/efi"
+        fsck.fat -a "$WIN_EFI" || true # Bypass Windows Fast Startup dirty bit
         mount -t vfat "$WIN_EFI" "$TARGET/boot/efi"
         GRUB_OS_PROBER="true"
         ;;
@@ -268,23 +271,40 @@ esac
 #              SOFTWARE CONFIGURATION
 # =====================================================================
 clear
-echo "Select your primary web browser:"
-echo " [1] LibreWolf (Native - Privacy Hardened)"
-echo " [2] Firefox   (Native - Standard)"
-echo " [3] Brave     (Native - Chromium Engine)"
-echo " [4] None"
-read -p "Choice (1-4): " BROWSER_CHOICE
-read -p "Require LibreOffice suite? (y/N): " OFFICE_CHOICE
+
+# Tiered Offline Architecture: Skip heavy apps if offline
+if [ "$INSTALL_MODE" = "1" ]; then
+    echo "Select your primary web browser:"
+    echo " [1] LibreWolf (Native - Privacy Hardened)"
+    echo " [2] Firefox   (Native - Standard)"
+    echo " [3] Brave     (Native - Chromium Engine)"
+    echo " [4] None"
+    read -p "Choice (1-4): " BROWSER_CHOICE
+    read -p "Require LibreOffice suite? (y/N): " OFFICE_CHOICE
+
+    [[ "$OFFICE_CHOICE" =~ ^[Yy]$ ]] && CORE_PKGS="$CORE_PKGS libreoffice-fresh qt5-wayland qt6-wayland"
+    case $BROWSER_CHOICE in 
+        1) CORE_PKGS="$CORE_PKGS librewolf" ;; 
+        2) CORE_PKGS="$CORE_PKGS firefox" ;; 
+        3) CORE_PKGS="$CORE_PKGS brave-bin" ;; 
+    esac
+else
+    echo "[INFO] Offline Mode Detected."
+    echo "       Web browsers and LibreOffice will be skipped to keep the ISO size minimal."
+    echo "       You can install them via pacman or flatpak after booting."
+    echo "----------------------------------------------------------"
+    sleep 3
+fi
+
 read -p "Apply Hyper-Performance Matrix? (ZRAM, Fast I/O) [Y/n]: " PERF_CHOICE
 
-[[ "$OFFICE_CHOICE" =~ ^[Yy]$ ]] && CORE_PKGS="$CORE_PKGS libreoffice-fresh qt5-wayland qt6-wayland"
-case $BROWSER_CHOICE in 1) CORE_PKGS="$CORE_PKGS librewolf" ;; 2) CORE_PKGS="$CORE_PKGS firefox" ;; 3) CORE_PKGS="$CORE_PKGS brave-bin" ;; esac
 if grep -q "AuthenticAMD" /proc/cpuinfo; then CORE_PKGS="$CORE_PKGS amd-ucode"; elif grep -q "GenuineIntel" /proc/cpuinfo; then CORE_PKGS="$CORE_PKGS intel-ucode"; fi
 
+# Strict GPU matching to avoid audio-controller false positives
 GPU_COUNT=0
-if lspci 2>/dev/null | grep -iq nvidia; then CORE_PKGS="$CORE_PKGS nvidia nvidia-utils"; GPU_COUNT=$((GPU_COUNT + 1)); fi
-if lspci 2>/dev/null | grep -iq amd; then CORE_PKGS="$CORE_PKGS xf86-video-amdgpu"; GPU_COUNT=$((GPU_COUNT + 1)); fi
-if lspci 2>/dev/null | grep -iq intel; then CORE_PKGS="$CORE_PKGS intel-media-driver"; GPU_COUNT=$((GPU_COUNT + 1)); fi
+if lspci -vnn | grep -i vga | grep -iq nvidia; then CORE_PKGS="$CORE_PKGS nvidia nvidia-utils"; GPU_COUNT=$((GPU_COUNT + 1)); fi
+if lspci -vnn | grep -i vga | grep -iq amd; then CORE_PKGS="$CORE_PKGS xf86-video-amdgpu"; GPU_COUNT=$((GPU_COUNT + 1)); fi
+if lspci -vnn | grep -i vga | grep -iq intel; then CORE_PKGS="$CORE_PKGS intel-media-driver"; GPU_COUNT=$((GPU_COUNT + 1)); fi
 [ "$GPU_COUNT" -gt 1 ] && CORE_PKGS="$CORE_PKGS switcheroo-control"
 
 echo "Select your primary Graphical Desktop Workspace:"
@@ -296,7 +316,7 @@ read -p "Choice (1-3): " DE_CHOICE
 case $DE_CHOICE in
     1) CORE_PKGS="$CORE_PKGS hyprland waybar kitty rofi xdg-desktop-portal-hyprland polkit-kde-agent thunar gvfs" ;;
     2) CORE_PKGS="$CORE_PKGS plasma-desktop plasma-workspace plasma-nm power-profiles-daemon kscreen konsole dolphin ark kate spectacle discover packagekit-qt6 sddm-kcm" ;;
-    3) CORE_PKGS="$CORE_PKGS xfce4 xfce4-goodies" ;;
+    3) CORE_PKGS="$CORE_PKGS xfce4 xfce4-terminal xfce4-goodies" ;;
 esac
 
 # =====================================================================
@@ -326,6 +346,10 @@ if [ "$INSTALL_MODE" = "2" ]; then
     mkdir -p "$TARGET/var/cache/pacman/pkg"
     cp -n "$ISO_CACHE"/* "$TARGET/var/cache/pacman/pkg/" 2>/dev/null || true
     
+    # Sync databases to target so offline pacstrap works
+    mkdir -p "$TARGET/var/lib/pacman/sync"
+    cp -r /var/lib/pacman/sync/* "$TARGET/var/lib/pacman/sync/" 2>/dev/null || true
+    
     mv /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist.bak || true
     echo "" > /etc/pacman.d/mirrorlist
     sed -i 's/"--refresh"//g' /usr/bin/pacstrap
@@ -338,14 +362,14 @@ else
     timedatectl set-ntp true
     
     # 🚨 INJECT GLOBAL GEO-MIRROR TO FIX DB SYNC CRASH 🚨
-    echo 'Server = [https://geo.mirror.pkgbuild.com/$repo/os/$arch](https://geo.mirror.pkgbuild.com/$repo/os/$arch)' > /etc/pacman.d/mirrorlist
+    echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist
     
     pacman-key --init || true; pacman-key --populate archlinux || true
     
     # Init Chaotic AUR locally so pacstrap can read the keys
     pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com || true
     pacman-key --lsign-key 3056513887B78AEB || true
-    pacman -U '[https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst](https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst)' '[https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst](https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst)' --noconfirm || true
+    pacman -U 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst' 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst' --noconfirm || true
     
     trap - ERR 
     DOWNLOAD_SUCCESS=0
