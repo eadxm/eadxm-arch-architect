@@ -16,15 +16,13 @@ Unlike static installers, Architect evaluates your specific machine mid-deployme
 🛠️ The Core Installation Pipeline
 
 To understand what happens under the hood when you boot the ISO, here is how the engine processes your hardware:
-Plaintext
 
 [ Boot ISO ] ➔ [ Detect Firmware: UEFI vs Legacy BIOS ]
-                      │
-                      ├─► UEFI ──► GPT Drive Table ──► 1GB EFI + Root
-                      └─► BIOS ──► MBR Drive Table ──► 100% Root (No EFI)
 │
-[ Provision Packages via pacstrap ] ➔ [ Inject Hardware Drivers ] ➔ [ Install GRUB ] ➔ [ Done ]                     
-
+├─► UEFI ──► GPT Drive Table ──► 1GB EFI + Root
+└─► BIOS ──► MBR Drive Table ──► 100% Root (No EFI)
+│
+[ Provision Packages via pacstrap ] ➔ [ Inject Hardware Drivers ] ➔ [ Install GRUB ] ➔ [ Done ]
 📦 What gets installed? (The Core Software Matrix)
 
 The system bakes in the absolute essentials for a cutting-edge desktop experience, removing all the manual configuration work.
@@ -101,12 +99,11 @@ Step 2: Boot the Target Hardware
 
 Once the Architect engine is running, it will guide you through three instant steps:
 
-    Connection Architecture: Select Online Mode to sync the absolute newest package pools over Wi-Fi, or Offline Mode to deploy air-gapped without an internet link.
+Connection Architecture: Select Online Mode to sync the absolute newest package pools over Wi-Fi, or Offline Mode to deploy air-gapped without an internet link.
 
-    Storage Provisioning: Choose Dual-Boot to safely carve space alongside Windows, Hard Nuke to clean-wipe the entire drive, or Target Nuke to cleanly dissolve just your Windows C: drive partition.
+Storage Provisioning: Choose Dual-Boot to safely carve space alongside Windows, Hard Nuke to clean-wipe the entire drive, or Target Nuke to cleanly dissolve just your Windows C: drive partition.
 
-    Identity & Software: Name your machine, pick your favorite web browser (Firefox, Chromium, Zen, or Brave), and choose your preferred Desktop Workspace environment.
-
+Identity & Software: Name your machine, pick your favorite web browser (Firefox, Chromium, Zen, or Brave), and choose your preferred Desktop Workspace environment.
 🚨 Fail-Safe Emergency Recovery Mode
 
 Things happen during manual installs. That’s why Architect features an internal Telemetry Error Trapping Engine.
