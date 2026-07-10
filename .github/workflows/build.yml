@@ -97,9 +97,10 @@ jobs:
           # Copy the installer into the live filesystem (airootfs/root/ on
           # the profile becomes /root/ on the booted ISO), stripping any
           # Windows line endings so bash doesn't choke on it, then mark it
-          # executable.
+          # executable. 
+          # THE FIX: Point sed to the exact location of install.sh in your repo
           mkdir -p /tmp/eadxm_profile/airootfs/root
-          sed 's/\r$//' install.sh > /tmp/eadxm_profile/airootfs/root/install.sh
+          sed 's/\r$//' airootfs/usr/local/bin/install.sh > /tmp/eadxm_profile/airootfs/root/install.sh
           chmod +x /tmp/eadxm_profile/airootfs/root/install.sh
 
           # Copy the pre-built offline package cache into the live
