@@ -33,20 +33,6 @@ error_handler() {
 
 trap 'error_handler $? $LINENO' ERR
 
-spinner() {
-    local pid=$1
-    local delay=0.1
-    local spinstr='|/-\'
-    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
-        local temp=${spinstr#?}
-        printf " [%c]  " "$spinstr"
-        local spinstr=$temp${spinstr%"$temp"}
-        sleep $delay
-        printf "\b\b\b\b\b\b"
-    done
-    printf "    \b\b\b\b"
-}
-
 clear
 echo "=========================================================="
 echo "              KESTREL ARCH DEPLOYMENT ENGINE              "
@@ -68,7 +54,7 @@ GRUB_OS_PROBER="true"
 EFI_DIR="/boot/efi"
 ARCH_ROOT=""
 
-CORE_PKGS="base linux linux-firmware grub efibootmgr os-prober ntfs-3g networkmanager iwd bluez bluez-utils blueman pipewire pipewire-pulse wireplumber brightnessctl flatpak xorg-server sddm sudo zram-generator earlyoom reflector ttf-dejavu ttf-liberation noto-fonts noto-fonts-emoji curl chaotic-keyring chaotic-mirrorlist parted zenity foot git"
+CORE_PKGS="base linux linux-firmware grub efibootmgr os-prober ntfs-3g networkmanager iwd bluez bluez-utils blueman pipewire pipewire-pulse wireplumber brightnessctl flatpak xorg-server sddm sudo zram-generator earlyoom reflector ttf-dejavu ttf-liberation noto-fonts noto-fonts-emoji curl chaotic-keyring chaotic-mirrorlist parted foot git"
 
 # =====================================================================
 #              DYNAMIC HARDWARE DRIVE DETECTOR
@@ -155,7 +141,7 @@ case $USER_CHOICE in
         
         if [ "$USER_CHOICE" = "2" ]; then
             read -r -p "Type 'NUKE' to erase $ARCH_ROOT: " CONFIRM_NUKE
-            [ "$CONFIRM_NUKE" != "NUKE" ] && exit 1
+            [[ "${CONFIRM_NUKE^^}" != "NUKE" ]] && exit 1
         fi
 
         if [ "$USER_CHOICE" = "6" ]; then
@@ -189,7 +175,7 @@ case $USER_CHOICE in
     3)
         echo "====== HARD NUKE: WIPE ENTIRE DRIVE ======"
         read -r -p "🚨 DANGER: This will wipe EVERYTHING on $TARGET_DRIVE. Type 'YES' to confirm: " CONFIRM_NUKE
-        [ "$CONFIRM_NUKE" != "YES" ] && exit 1
+        [[ "${CONFIRM_NUKE^^}" != "YES" ]] && exit 1
         
         sleep 2
         if [ -d "/sys/firmware/efi" ]; then
@@ -268,7 +254,7 @@ case $USER_CHOICE in
         done
         
         read -r -p "Type 'NUKE' to erase $C_DRIVE: " CONFIRM_NUKE
-        [ "$CONFIRM_NUKE" != "NUKE" ] && exit 1
+        [[ "${CONFIRM_NUKE^^}" != "NUKE" ]] && exit 1
         
         mkfs.ext4 -F "$C_DRIVE"; mount "$C_DRIVE" "$TARGET"
         
@@ -366,8 +352,11 @@ esac
 # =====================================================================
 clear
 
+# Enable live color formatting to make the wall of text look nice
+sed -i 's/^#Color/Color\nILoveCandy/' /etc/pacman.conf 2>/dev/null || true
+
 if [ "$INSTALL_MODE" = "2" ]; then
-    echo -n "[INFO] Deploying OFFLINE using local repository cache... "
+    echo "[INFO] Deploying OFFLINE using local repository cache... "
     
     cat << EOF > /tmp/offline-pacman.conf
 [options]
@@ -382,13 +371,13 @@ EOF
     mkdir -p "$TARGET/var/cache/pacman/pkg"
     cp -n "$ISO_CACHE"/* "$TARGET/var/cache/pacman/pkg/" 2>/dev/null || true
     
-    pacstrap -C /tmp/offline-pacman.conf -K "$TARGET" --noconfirm $CORE_PKGS &> /dev/null &
-    spinner $!
+    # Run pacstrap visibly in the foreground to catch errors
+    pacstrap -C /tmp/offline-pacman.conf -K "$TARGET" --noconfirm $CORE_PKGS
     
     echo -e "\n[SUCCESS] Base system deployed."
     cp /etc/pacman.conf "$TARGET/etc/pacman.conf"
 else
-    echo -n "[INFO] Deploying ONLINE... "
+    echo "[INFO] Deploying ONLINE... "
     timedatectl set-ntp true
     echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist
     
@@ -403,8 +392,12 @@ else
     DOWNLOAD_SUCCESS=0
     while [ "$DOWNLOAD_SUCCESS" -eq 0 ]; do
         rm -f "$TARGET/var/lib/pacman/db.lck" 2>/dev/null || true
-        if pacstrap -K "$TARGET" --noconfirm $CORE_PKGS &> /dev/null & spinner $!; wait $!; then DOWNLOAD_SUCCESS=1
-        else read -r -p "Install failed! Retry? (1=Yes, 2=Reboot): " FAIL_CHOICE; [ "$FAIL_CHOICE" = "2" ] && { umount -R "$TARGET"; reboot; }; fi
+        # Run pacstrap visibly in the foreground
+        if pacstrap -K "$TARGET" --noconfirm $CORE_PKGS; then 
+            DOWNLOAD_SUCCESS=1
+        else 
+            read -r -p "Install failed! Retry? (1=Yes, 2=Reboot): " FAIL_CHOICE; [ "$FAIL_CHOICE" = "2" ] && { umount -R "$TARGET"; reboot; }
+        fi
     done
     trap 'error_handler $? $LINENO' ERR 
     echo -e "\n[SUCCESS] Base system deployed."
