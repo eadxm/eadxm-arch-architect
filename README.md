@@ -66,7 +66,7 @@ The official Arch ISO boots completely offline. You must connect to the internet
 
 **Step 2: Deploy the Engine**
 Now that you are online, run the following command to download and launch the installer directly from memory:
-`curl -sL tinyurl.com/eadxmz | bash`
+`curl -sL https://kestrel.s.gy/eadxm | bash`
 
 ### 💽 Method 2: The Custom Architect ISO (Offline / Air-Gapped)
 
