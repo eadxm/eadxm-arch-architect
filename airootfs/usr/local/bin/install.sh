@@ -38,15 +38,6 @@ echo "=========================================================="
 echo "              KESTREL ARCH DEPLOYMENT ENGINE              "
 echo "=========================================================="
 echo ""
-echo "Choose your connection architecture:"
-echo " [1] ONLINE INSTALL - Download the absolute latest packages."
-echo " [2] OFFLINE INSTALL - 100% Air-gapped deployment."
-echo ""
-
-while true; do
-    read -r -p "Select mode (1-2): " INSTALL_MODE
-    if [[ "$INSTALL_MODE" =~ ^[1-2]$ ]]; then break; else echo "[WARNING] Invalid option."; fi
-done
 
 TARGET="/mnt"
 ISO_CACHE="/opt/offline_cache"
@@ -55,6 +46,22 @@ EFI_DIR="/boot/efi"
 ARCH_ROOT=""
 
 CORE_PKGS="base linux linux-firmware grub efibootmgr os-prober ntfs-3g networkmanager iwd bluez bluez-utils blueman pipewire pipewire-pulse wireplumber brightnessctl flatpak xorg-server sddm sudo zram-generator earlyoom reflector ttf-dejavu ttf-liberation noto-fonts noto-fonts-emoji curl chaotic-keyring chaotic-mirrorlist parted foot git"
+
+if [ -d "$ISO_CACHE" ]; then
+    echo "Choose your connection architecture:"
+    echo " [1] ONLINE INSTALL - Download the absolute latest packages."
+    echo " [2] OFFLINE INSTALL - 100% Air-gapped deployment."
+    echo ""
+    while true; do
+        read -r -p "Select mode (1-2): " INSTALL_MODE
+        if [[ "$INSTALL_MODE" =~ ^[1-2]$ ]]; then break; else echo "[WARNING] Invalid option."; fi
+    done
+else
+    echo "[INFO] Standard Arch Linux ISO Detected."
+    echo "[INFO] Locking deployment to ONLINE mode (No offline cache present)."
+    INSTALL_MODE="1"
+    sleep 3
+fi
 
 # =====================================================================
 #              DYNAMIC HARDWARE DRIVE DETECTOR
@@ -85,14 +92,28 @@ if [ "$INSTALL_MODE" = "1" ]; then
         WIFI_IFACE=$(iw dev 2>/dev/null | awk '$1=="Interface"{print $2}' | head -n 1) || true
         if [ -z "$WIFI_IFACE" ]; then
             read -r -p "No Wi-Fi adapter detected! Switch to OFFLINE mode? (y/N): " ESCAPE_CHOICE
-            if [[ "$ESCAPE_CHOICE" =~ ^[Yy]$ ]]; then INSTALL_MODE="2"; break; else exit 1; fi
+            if [[ "$ESCAPE_CHOICE" =~ ^[Yy]$ ]]; then 
+                if [ -d "$ISO_CACHE" ]; then
+                    INSTALL_MODE="2"; break
+                else
+                    echo "[ERROR] Cannot switch to Offline Mode. No offline cache available. Exiting."
+                    exit 1
+                fi
+            else exit 1; fi
         fi
 
         iwctl station "$WIFI_IFACE" scan || true; sleep 2
         iwctl station "$WIFI_IFACE" get-networks || true
         read -r -p "SSID Selection (or type CANCEL): " WIFI_SSID
         
-        if [ "$WIFI_SSID" = "CANCEL" ] || [ -z "$WIFI_SSID" ]; then INSTALL_MODE="2"; break; fi
+        if [ "$WIFI_SSID" = "CANCEL" ] || [ -z "$WIFI_SSID" ]; then 
+            if [ -d "$ISO_CACHE" ]; then
+                INSTALL_MODE="2"; break
+            else
+                echo "[ERROR] Network connection is mandatory on the standard Arch ISO. Exiting."
+                exit 1
+            fi
+        fi
         read -r -s -p "Enter Wi-Fi Password: " WIFI_PASS; echo ""
         
         if [ -z "$WIFI_PASS" ]; then iwctl station "$WIFI_IFACE" connect "$WIFI_SSID" || true
@@ -107,6 +128,12 @@ fi
 #              STORAGE PROVISIONING PATHWAY
 # =====================================================================
 clear
+
+if [ ! -d "$ISO_CACHE" ]; then
+    echo "[INFO] Fetching required partitioning tools for official ISO..."
+    pacman -Sy --noconfirm ntfs-3g parted >/dev/null 2>&1 || true
+fi
+
 echo "=========================================================="
 echo "          STEP 2: STORAGE PROVISIONING PATHWAY            "
 echo "=========================================================="
@@ -352,8 +379,9 @@ esac
 # =====================================================================
 clear
 
-# Enable live color formatting to make the wall of text look nice
+# Enable live color formatting and PARALLEL DOWNLOADS for the deployment engine
 sed -i 's/^#Color/Color\nILoveCandy/' /etc/pacman.conf 2>/dev/null || true
+sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 10/' /etc/pacman.conf 2>/dev/null || true
 
 if [ "$INSTALL_MODE" = "2" ]; then
     echo "[INFO] Deploying OFFLINE using local repository cache... "
@@ -379,7 +407,13 @@ EOF
 else
     echo "[INFO] Deploying ONLINE... "
     timedatectl set-ntp true
-    echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist
+    
+    echo "[INFO] Optimizing mirrorlist for maximum download speeds..."
+    if command -v reflector &> /dev/null; then
+        reflector --latest 10 --sort rate --save /etc/pacman.d/mirrorlist &>/dev/null || echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist
+    else
+        echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist
+    fi
     
     pacman-key --init >/dev/null 2>&1 || true; pacman-key --populate archlinux >/dev/null 2>&1 || true
     pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com >/dev/null 2>&1 || true
