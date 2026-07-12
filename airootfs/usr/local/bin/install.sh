@@ -230,6 +230,11 @@ case $USER_CHOICE in
         
     4)
         echo "====== AUTOMATED WINDOWS RESIZE & DUAL BOOT ======"
+        echo "🚨 WARNING: Shrinking Windows partitions carries data loss risks."
+        echo "   It is HIGHLY recommended to boot Windows and run 'chkdsk /f' first."
+        read -r -p "Do you want to proceed with the resize? (y/N): " PROCEED_RESIZE
+        [[ ! "$PROCEED_RESIZE" =~ ^[Yy]$ ]] && exit 1
+
         lsblk "$TARGET_DRIVE" -o NAME,SIZE,TYPE,FSTYPE
         
         while true; do
@@ -318,9 +323,19 @@ username=$(printf '%s\n' "$username" | tr -cd 'a-z0-9_')
 [ -z "$username" ] && username="kestrel_user"
 
 while true; do 
-    read -r -s -p "Enter secure password: " user_password; echo ""
+    read -r -s -p "Enter secure password for $username: " user_password; echo ""
     [ -n "$user_password" ] && break
 done
+
+read -r -p "Use the same password for the 'root' administrator account? [Y/n]: " SAME_ROOT
+if [[ "$SAME_ROOT" =~ ^[Nn]$ ]]; then
+    while true; do 
+        read -r -s -p "Enter secure password for root: " root_password; echo ""
+        [ -n "$root_password" ] && break
+    done
+else
+    root_password="$user_password"
+fi
 
 # =====================================================================
 #              SOFTWARE CONFIGURATION
@@ -349,7 +364,6 @@ else
     echo "       Defaulting to Zen Browser to ensure web access post-install."
     CORE_PKGS="$CORE_PKGS zen-browser-bin"
     
-    # THE FIX: Prompt for LibreOffice even when offline
     read -r -p "Require LibreOffice suite? (y/N): " OFFICE_CHOICE
     [[ "$OFFICE_CHOICE" =~ ^[Yy]$ ]] && CORE_PKGS="$CORE_PKGS libreoffice-fresh qt5-wayland qt6-wayland"
     
@@ -420,10 +434,13 @@ else
         echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist
     fi
     
-    pacman-key --init >/dev/null 2>&1 || true; pacman-key --populate archlinux >/dev/null 2>&1 || true
-    pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com >/dev/null 2>&1 || true
-    pacman-key --lsign-key 3056513887B78AEB >/dev/null 2>&1 || true
-    pacman -U 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst' 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst' --noconfirm >/dev/null 2>&1 || true
+    echo "[INFO] Injecting Chaotic-AUR repository for third-party binaries..."
+    pacman-key --init >/dev/null 2>&1 || true
+    pacman-key --populate archlinux >/dev/null 2>&1 || true
+    
+    pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com >/dev/null 2>&1
+    pacman-key --lsign-key 3056513887B78AEB >/dev/null 2>&1
+    pacman -U 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst' 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst' --noconfirm >/dev/null 2>&1
     
     echo -e "\n[chaotic-aur]\nInclude = /etc/pacman.d/chaotic-mirrorlist" >> /etc/pacman.conf
     
@@ -450,8 +467,10 @@ genfstab -U "$TARGET" >> "$TARGET/etc/fstab"
 #              CHROOT PROVISIONING 
 # =====================================================================
 arch-chroot "$TARGET" useradd -m -G wheel -s /bin/bash "$username"
+
 printf '%s:%s\n' "$username" "$user_password" | arch-chroot "$TARGET" chpasswd
-printf '%s:%s\n' "root" "$user_password" | arch-chroot "$TARGET" chpasswd
+printf '%s:%s\n' "root" "$root_password" | arch-chroot "$TARGET" chpasswd
+
 printf '%s\n' "$system_hostname" > "$TARGET/etc/hostname"
 echo -e "127.0.0.1 localhost\n::1 localhost\n127.0.1.1 ${system_hostname}.localdomain ${system_hostname}" > "$TARGET/etc/hosts"
 
@@ -496,7 +515,11 @@ if [[ "$PERF_CHOICE" =~ ^[Yy]$ || -z "$PERF_CHOICE" ]]; then
     arch-chroot "$TARGET" systemctl enable earlyoom.service || true
     sed -i 's/#MAKEFLAGS="-j2"/MAKEFLAGS="-j$(nproc)"/' "$TARGET/etc/makepkg.conf"
     sed -i 's/^COMPRESSZST=.*/COMPRESSZST=(zstd -c -T0 -)/' "$TARGET/etc/makepkg.conf"
-    printf 'ParallelDownloads = 10\nColor\nILoveCandy\n' >> "$TARGET/etc/pacman.conf"
+    
+    # THE FIX: Safely uncomment and inject under [options] using sed
+    sed -i 's/^#Color/Color\nILoveCandy/' "$TARGET/etc/pacman.conf" 2>/dev/null || true
+    sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 10/' "$TARGET/etc/pacman.conf" 2>/dev/null || true
+    
     echo -e "[zram0]\nzram-size = ram / 2\ncompression-algorithm = zstd" > "$TARGET/etc/systemd/zram-generator.conf"
     if [ "$(lsblk -nd -o ROTA "$TARGET_DRIVE" | head -n 1)" = "0" ]; then arch-chroot "$TARGET" systemctl enable fstrim.timer || true; fi
 fi
