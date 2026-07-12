@@ -77,7 +77,7 @@ If you are deploying to a machine without an internet connection, or you want th
 
 **Step 1: Download & Flash**
 1. Head over to the [GitHub Releases Page](/../../releases) and grab the latest compiled Eadxm-Arch-Architect-ISO.
-2. Flash the ISO to a USB drive using `dd` on Linux, or Rufus (choose DD Mode) on Windows.
+2. Flash the ISO to a USB drive using `dd mode` in Rufus (choose DD Mode) on Windows or just use 'Ventoy' on either Windows or Linux.
 
 **Step 2: Boot the Target Hardware**
 1. Plug the USB into your target machine and mash your motherboard's boot-menu key (usually F12, F11, F2 or Del).
