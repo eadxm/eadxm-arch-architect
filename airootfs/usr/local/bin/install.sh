@@ -13,6 +13,15 @@ error_handler() {
     echo "[FAULT] Command failed with exit code: $exit_code"
     echo "[LOCATION] Failed execution occurred on line: $line_number"
     echo "----------------------------------------------------------"
+    
+    # If we are running in GUI mode, don't trap the user in a terminal prompt
+    if [ "$NON_INTERACTIVE" = "1" ]; then
+        echo "[INFO] GUI Mode active. Aborting deployment."
+        umount -R /mnt &>/dev/null || true
+        swapoff -a &>/dev/null || true
+        exit "$exit_code"
+    fi
+
     echo "Options:"
     echo " [1] Force safe unmount and restart system execution"
     echo " [2] Drop into live emergency recovery shell (Zsh)"
@@ -33,9 +42,33 @@ error_handler() {
 
 trap 'error_handler $? $LINENO' ERR
 
+# =====================================================================
+#              GUI / HEADLESS OVERRIDE MODULE
+# =====================================================================
+# When the Rust app runs this, it skips the interactive prompts
+if [ "$NON_INTERACTIVE" = "1" ]; then
+    echo "[INFO] Non-Interactive GUI Mode Engaged."
+    
+    # 1. Map the Rust UI variables to the Bash variables
+    TARGET_DRIVE="${TARGET_DISK}"
+    
+    # 2. Provide sensible auto-defaults for everything the GUI doesn't ask for
+    USER_CHOICE="3"       # 3 = Hard Nuke (Matches the warning in the GUI)
+    CONFIRM_NUKE="YES"
+    
+    system_hostname="kestrel"
+    username="kestrel"
+    user_password="password"
+    root_password="password"
+    
+    BROWSER_CHOICE="1"    # Zen Browser
+    PERF_CHOICE="Y"       # ZRAM, Fast I/O
+    DE_CHOICE="1"         # Hyprland
+fi
+
 clear
 echo "=========================================================="
-echo "              KESTREL ARCH DEPLOYMENT ENGINE              "
+echo "               KESTREL ARCH DEPLOYMENT ENGINE               "
 echo "=========================================================="
 echo ""
 
@@ -45,38 +78,42 @@ GRUB_OS_PROBER="true"
 EFI_DIR="/boot/efi"
 ARCH_ROOT=""
 
-CORE_PKGS="base linux linux-firmware grub efibootmgr os-prober ntfs-3g networkmanager iwd bluez bluez-utils blueman pipewire pipewire-pulse wireplumber brightnessctl flatpak xorg-server sddm sudo zram-generator earlyoom reflector ttf-dejavu ttf-liberation noto-fonts noto-fonts-emoji curl chaotic-keyring chaotic-mirrorlist parted foot git stow"
+CORE_PKGS="base linux linux-firmware grub efibootmgr os-prober ntfs-3g networkmanager iwd bluez bluez-utils blueman pipewire pipewire-pulse wireplumber brightnessctl flatpak xorg-server sddm sudo zram-generator earlyoom reflector ttf-dejavu ttf-liberation noto-fonts noto-fonts-emoji curl chaotic-keyring chaotic-mirrorlist parted foot git stow qt5-wayland qt6-wayland"
 
-if [ -d "$ISO_CACHE" ]; then
-    echo "Choose your connection architecture:"
-    echo " [1] ONLINE INSTALL - Download the absolute latest packages."
-    echo " [2] OFFLINE INSTALL - 100% Air-gapped deployment."
-    echo ""
-    while true; do
-        read -r -p "Select mode (1-2): " INSTALL_MODE
-        if [[ "$INSTALL_MODE" =~ ^[1-2]$ ]]; then break; else echo "[WARNING] Invalid option."; fi
-    done
-else
-    echo "[INFO] Standard Arch Linux ISO Detected."
-    echo "[INFO] Locking deployment to ONLINE mode (No offline cache present)."
-    INSTALL_MODE="1"
-    sleep 3
+if [ -z "$INSTALL_MODE" ]; then
+    if [ -d "$ISO_CACHE" ]; then
+        echo "Choose your connection architecture:"
+        echo " [1] ONLINE INSTALL - Download the absolute latest packages."
+        echo " [2] OFFLINE INSTALL - 100% Air-gapped deployment."
+        echo ""
+        while true; do
+            read -r -p "Select mode (1-2): " INSTALL_MODE
+            if [[ "$INSTALL_MODE" =~ ^[1-2]$ ]]; then break; else echo "[WARNING] Invalid option."; fi
+        done
+    else
+        echo "[INFO] Standard Arch Linux ISO Detected."
+        echo "[INFO] Locking deployment to ONLINE mode (No offline cache present)."
+        INSTALL_MODE="1"
+        sleep 3
+    fi
 fi
 
 # =====================================================================
 #              DYNAMIC HARDWARE DRIVE DETECTOR
 # =====================================================================
-clear
-echo "=========================================================="
-echo "                TARGET DISK SELECTION MODULE               "
-echo "=========================================================="
-lsblk -d -o NAME,SIZE,MODEL,TYPE | grep -E "disk|nvme|loop|mmc" || true
-echo "----------------------------------------------------------"
+if [ -z "$TARGET_DRIVE" ]; then
+    clear
+    echo "=========================================================="
+    echo "                 TARGET DISK SELECTION MODULE                "
+    echo "=========================================================="
+    lsblk -d -o NAME,SIZE,MODEL,TYPE | grep -E "disk|nvme|loop|mmc" || true
+    echo "----------------------------------------------------------"
 
-while true; do
-    read -r -p "Type your destination installation disk (e.g., /dev/sda, /dev/nvme0n1): " TARGET_DRIVE
-    if [ -b "$TARGET_DRIVE" ]; then break; else echo "[ERROR] Device path does not exist. Try again."; fi
-done
+    while true; do
+        read -r -p "Type your destination installation disk (e.g., /dev/sda, /dev/nvme0n1): " TARGET_DRIVE
+        if [ -b "$TARGET_DRIVE" ]; then break; else echo "[ERROR] Device path does not exist. Try again."; fi
+    done
+fi
 
 umount -R /mnt &>/dev/null || true
 if [[ "$TARGET_DRIVE" =~ [0-9]$ ]]; then PART_PREFIX="p"; else PART_PREFIX=""; fi
@@ -84,7 +121,8 @@ if [[ "$TARGET_DRIVE" =~ [0-9]$ ]]; then PART_PREFIX="p"; else PART_PREFIX=""; f
 # =====================================================================
 #              NETWORK ENGAGEMENT ENGINE
 # =====================================================================
-if [ "$INSTALL_MODE" = "1" ]; then
+# Skip CLI Wi-Fi setup if running from the GUI (assume network is managed by live ISO DE)
+if [ "$INSTALL_MODE" = "1" ] && [ "$NON_INTERACTIVE" != "1" ]; then
     while true; do
         clear
         if ping -c 1 -W 2 archlinux.org &> /dev/null; then echo "[SUCCESS] Active network connection detected!"; sleep 2; break; fi
@@ -134,18 +172,23 @@ if [ ! -d "$ISO_CACHE" ]; then
     pacman -Sy --noconfirm ntfs-3g parted >/dev/null 2>&1 || true
 fi
 
-echo "=========================================================="
-echo "          STEP 2: STORAGE PROVISIONING PATHWAY            "
-echo "=========================================================="
-echo " [1] SAFE MULTI-BOOT - Install alongside existing OS (Manual Partitions)."
-echo " [2] REPLACE LINUX   - Wipe old Linux partition."
-echo " [3] HARD NUKE       - Wipe the entire drive, clean install."
-echo " [4] WINDOWS RESIZE  - AUTO-SHRINK Windows C: drive and install Arch."
-echo " [5] TARGET NUKE     - Wipe Windows C: drive only."
-echo " [6] MANUAL ADVANCED - Launch interactive cfdisk."
-echo " [7] DROP TO SHELL   - Exit to Zsh terminal."
+if [ -z "$USER_CHOICE" ]; then
+    echo "=========================================================="
+    echo "          STEP 2: STORAGE PROVISIONING PATHWAY            "
+    echo "=========================================================="
+    echo " [1] SAFE MULTI-BOOT - Install alongside existing OS (Manual Partitions)."
+    echo " [2] REPLACE LINUX   - Wipe old Linux partition."
+    echo " [3] HARD NUKE       - Wipe the entire drive, clean install."
+    echo " [4] WINDOWS RESIZE  - AUTO-SHRINK Windows C: drive and install Arch."
+    echo " [5] TARGET NUKE     - Wipe Windows C: drive only."
+    echo " [6] MANUAL ADVANCED - Launch interactive cfdisk."
+    echo " [7] DROP TO SHELL   - Exit to Zsh terminal."
 
-while true; do read -r -p "Enter your choice (1-7): " USER_CHOICE; [[ "$USER_CHOICE" =~ ^[1-7]$ ]] && break; done
+    while true; do read -r -p "Enter your choice (1-7): " USER_CHOICE; [[ "$USER_CHOICE" =~ ^[1-7]$ ]] && break; done
+fi
+
+# UI PROGRESS HOOK: Formatting
+echo "STARTING: Formatting partition tables on $TARGET_DRIVE..."
 
 case $USER_CHOICE in
     1|2|6)
@@ -201,7 +244,9 @@ case $USER_CHOICE in
         
     3)
         echo "====== HARD NUKE: WIPE ENTIRE DRIVE ======"
-        read -r -p "🚨 DANGER: This will wipe EVERYTHING on $TARGET_DRIVE. Type 'YES' to confirm: " CONFIRM_NUKE
+        if [ -z "$CONFIRM_NUKE" ]; then
+            read -r -p "🚨 DANGER: This will wipe EVERYTHING on $TARGET_DRIVE. Type 'YES' to confirm: " CONFIRM_NUKE
+        fi
         [[ "${CONFIRM_NUKE^^}" != "YES" ]] && exit 1
         
         sleep 2
@@ -314,27 +359,35 @@ echo "=========================================================="
 echo "              STEP 3: ACCOUNT CREATION                    "
 echo "=========================================================="
 
-read -r -p "Enter Hostname for this computer: " system_hostname
-system_hostname=$(printf '%s\n' "$system_hostname" | tr -cd 'a-zA-Z0-9-' | tr '[:upper:]' '[:lower:]')
-[ -z "$system_hostname" ] && system_hostname="kestrel-node"
+if [ -z "$system_hostname" ]; then
+    read -r -p "Enter Hostname for this computer: " system_hostname
+    system_hostname=$(printf '%s\n' "$system_hostname" | tr -cd 'a-zA-Z0-9-' | tr '[:upper:]' '[:lower:]')
+    [ -z "$system_hostname" ] && system_hostname="kestrel-node"
+fi
 
-read -r -p "Enter new username: " username
-username=$(printf '%s\n' "$username" | tr -cd 'a-z0-9_')
-[ -z "$username" ] && username="kestrel_user"
+if [ -z "$username" ]; then
+    read -r -p "Enter new username: " username
+    username=$(printf '%s\n' "$username" | tr -cd 'a-z0-9_')
+    [ -z "$username" ] && username="kestrel_user"
+fi
 
-while true; do 
-    read -r -s -p "Enter secure password for $username: " user_password; echo ""
-    [ -n "$user_password" ] && break
-done
-
-read -r -p "Use the same password for the 'root' administrator account? [Y/n]: " SAME_ROOT
-if [[ "$SAME_ROOT" =~ ^[Nn]$ ]]; then
+if [ -z "$user_password" ]; then
     while true; do 
-        read -r -s -p "Enter secure password for root: " root_password; echo ""
-        [ -n "$root_password" ] && break
+        read -r -s -p "Enter secure password for $username: " user_password; echo ""
+        [ -n "$user_password" ] && break
     done
-else
-    root_password="$user_password"
+fi
+
+if [ -z "$root_password" ]; then
+    read -r -p "Use the same password for the 'root' administrator account? [Y/n]: " SAME_ROOT
+    if [[ "$SAME_ROOT" =~ ^[Nn]$ ]]; then
+        while true; do 
+            read -r -s -p "Enter secure password for root: " root_password; echo ""
+            [ -n "$root_password" ] && break
+        done
+    else
+        root_password="$user_password"
+    fi
 fi
 
 # =====================================================================
@@ -342,36 +395,34 @@ fi
 # =====================================================================
 clear
 
-if [ "$INSTALL_MODE" = "1" ]; then
-    echo "Select your primary web browser:"
-    echo " [1] Zen Browser (Default - Recommended)"
-    echo " [2] LibreWolf (Native - Privacy Hardened)"
-    echo " [3] Firefox   (Native - Standard)"
-    echo " [4] Brave     (Native - Chromium Engine)"
-    echo " [5] None"
-    read -r -p "Choice (1-5): " BROWSER_CHOICE
-    read -r -p "Require LibreOffice suite? (y/N): " OFFICE_CHOICE
-
-    [[ "$OFFICE_CHOICE" =~ ^[Yy]$ ]] && CORE_PKGS="$CORE_PKGS libreoffice-fresh qt5-wayland qt6-wayland"
-    case $BROWSER_CHOICE in 
-        1) CORE_PKGS="$CORE_PKGS zen-browser-bin" ;;
-        2) CORE_PKGS="$CORE_PKGS librewolf" ;; 
-        3) CORE_PKGS="$CORE_PKGS firefox" ;; 
-        4) CORE_PKGS="$CORE_PKGS brave-bin" ;; 
-    esac
-else
-    echo "[INFO] Offline Mode Detected."
-    echo "       Defaulting to Zen Browser to ensure web access post-install."
-    CORE_PKGS="$CORE_PKGS zen-browser-bin"
-    
-    read -r -p "Require LibreOffice suite? (y/N): " OFFICE_CHOICE
-    [[ "$OFFICE_CHOICE" =~ ^[Yy]$ ]] && CORE_PKGS="$CORE_PKGS libreoffice-fresh qt5-wayland qt6-wayland"
-    
-    echo "----------------------------------------------------------"
-    sleep 3
+if [ -z "$BROWSER_CHOICE" ]; then
+    if [ "$INSTALL_MODE" = "1" ]; then
+        echo "Select your primary web browser:"
+        echo " [1] Zen Browser (Default - Recommended)"
+        echo " [2] LibreWolf (Native - Privacy Hardened)"
+        echo " [3] Firefox   (Native - Standard)"
+        echo " [4] Brave     (Native - Chromium Engine)"
+        echo " [5] None"
+        read -r -p "Choice (1-5): " BROWSER_CHOICE
+    else
+        echo "[INFO] Offline Mode Detected."
+        echo "       Defaulting to Zen Browser to ensure web access post-install."
+        BROWSER_CHOICE="1"
+        echo "----------------------------------------------------------"
+        sleep 3
+    fi
 fi
 
-read -r -p "Apply Hyper-Performance Matrix? (ZRAM, Fast I/O) [Y/n]: " PERF_CHOICE
+case $BROWSER_CHOICE in 
+    1) CORE_PKGS="$CORE_PKGS zen-browser-bin" ;;
+    2) CORE_PKGS="$CORE_PKGS librewolf" ;; 
+    3) CORE_PKGS="$CORE_PKGS firefox" ;; 
+    4) CORE_PKGS="$CORE_PKGS brave-bin" ;; 
+esac
+
+if [ -z "$PERF_CHOICE" ]; then
+    read -r -p "Apply Hyper-Performance Matrix? (ZRAM, Fast I/O) [Y/n]: " PERF_CHOICE
+fi
 
 if grep -q "AuthenticAMD" /proc/cpuinfo; then CORE_PKGS="$CORE_PKGS amd-ucode"; elif grep -q "GenuineIntel" /proc/cpuinfo; then CORE_PKGS="$CORE_PKGS intel-ucode"; fi
 
@@ -381,11 +432,13 @@ if lspci -vnn | grep -i vga | grep -iq amd; then CORE_PKGS="$CORE_PKGS xf86-vide
 if lspci -vnn | grep -i vga | grep -iq intel; then CORE_PKGS="$CORE_PKGS intel-media-driver"; GPU_COUNT=$((GPU_COUNT + 1)); fi
 [ "$GPU_COUNT" -gt 1 ] && CORE_PKGS="$CORE_PKGS switcheroo-control"
 
-echo "Select your primary Graphical Desktop Workspace:"
-echo " [1] Hyprland   (Hardware-Accelerated Tiling)"
-echo " [2] KDE Plasma (Feature-Rich Desktop)"
-echo " [3] XFCE       (Lightweight Core)"
-read -r -p "Choice (1-3): " DE_CHOICE
+if [ -z "$DE_CHOICE" ]; then
+    echo "Select your primary Graphical Desktop Workspace:"
+    echo " [1] Hyprland   (Hardware-Accelerated Tiling)"
+    echo " [2] KDE Plasma (Feature-Rich Desktop)"
+    echo " [3] XFCE       (Lightweight Core)"
+    read -r -p "Choice (1-3): " DE_CHOICE
+fi
 
 case $DE_CHOICE in
     1) CORE_PKGS="$CORE_PKGS hyprland waybar kitty rofi-wayland xdg-desktop-portal-hyprland polkit-kde-agent thunar gvfs" ;;
@@ -401,6 +454,9 @@ clear
 # Enable live color formatting and PARALLEL DOWNLOADS for the deployment engine
 sed -i 's/^#Color/Color\nILoveCandy/' /etc/pacman.conf 2>/dev/null || true
 sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 10/' /etc/pacman.conf 2>/dev/null || true
+
+# UI PROGRESS HOOK: Pacstrap
+echo "STARTING: Running pacstrap (Installing base system)..."
 
 if [ "$INSTALL_MODE" = "2" ]; then
     echo "[INFO] Deploying OFFLINE using local repository cache... "
@@ -452,7 +508,12 @@ else
         if pacstrap -K "$TARGET" --noconfirm $CORE_PKGS; then 
             DOWNLOAD_SUCCESS=1
         else 
-            read -r -p "Install failed! Retry? (1=Yes, 2=Reboot): " FAIL_CHOICE; [ "$FAIL_CHOICE" = "2" ] && { umount -R "$TARGET"; reboot; }
+            if [ "$NON_INTERACTIVE" = "1" ]; then
+                echo "[ERROR] Pacstrap failed in GUI Mode."
+                exit 1
+            else
+                read -r -p "Install failed! Retry? (1=Yes, 2=Reboot): " FAIL_CHOICE; [ "$FAIL_CHOICE" = "2" ] && { umount -R "$TARGET"; reboot; }
+            fi
         fi
     done
     trap 'error_handler $? $LINENO' ERR 
@@ -466,6 +527,9 @@ genfstab -U "$TARGET" >> "$TARGET/etc/fstab"
 # =====================================================================
 #              CHROOT PROVISIONING 
 # =====================================================================
+# UI PROGRESS HOOK: Bootloader
+echo "STARTING: Configuring bootloader (grub)..."
+
 arch-chroot "$TARGET" useradd -m -G wheel -s /bin/bash "$username"
 
 printf '%s:%s\n' "$username" "$user_password" | arch-chroot "$TARGET" chpasswd
@@ -536,6 +600,15 @@ echo "=========================================================="
 echo "   KESTREL ARCH DEPLOYED! REBOOTING IN 5 SECONDS...       "
 echo "=========================================================="
 sleep 5
+
+# Ensure we don't reboot the live system if running in GUI background thread
+if [ "$NON_INTERACTIVE" = "1" ]; then
+    trap - ERR
+    umount -R "$TARGET" 2>/dev/null || true
+    echo "[INFO] GUI Installation Complete. Handing control back to UI."
+    exit 0
+fi
+
 trap - ERR
 umount -R "$TARGET" 2>/dev/null || true
 reboot || true
