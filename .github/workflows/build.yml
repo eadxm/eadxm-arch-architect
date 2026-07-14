@@ -16,12 +16,16 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Build Dependencies
+      - name: Install Build Dependencies (Including Rust)
         run: |
           echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist
           pacman -Sy --noconfirm archlinux-keyring
           pacman -Su --noconfirm
-          pacman -S --noconfirm archiso wget gawk mtools dosfstools erofs-utils squashfs-tools pacman-contrib
+          # Added rustup, cmake, and base-devel to compile the Rust GUI
+          pacman -S --noconfirm archiso wget gawk mtools dosfstools erofs-utils squashfs-tools pacman-contrib rustup base-devel cmake pkgconf freetype2 fontconfig libx11
+          
+          # Initialize Rust
+          rustup default stable
 
       - name: Prepare Offline Package Cache & Dependencies
         run: |
@@ -34,7 +38,7 @@ jobs:
           pacman -U 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst' 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst' --noconfirm
           echo -e "\n[chaotic-aur]\nInclude = /etc/pacman.d/chaotic-mirrorlist" >> /etc/pacman.conf
 
-          # Downloading all core dependencies (no Rust stuff here)
+          # Downloading all core dependencies (No changes made here)
           pacman -Syw --cachedir airootfs/opt/offline_cache --dbpath /tmp/empty_db --noconfirm \
             base linux linux-firmware grub efibootmgr os-prober ntfs-3g networkmanager iwd bluez bluez-utils blueman \
             pipewire pipewire-pulse wireplumber brightnessctl flatpak xorg-server sddm sudo zram-generator earlyoom \
@@ -50,16 +54,34 @@ jobs:
           cd airootfs/opt/offline_cache
           repo-add kestrel-offline.db.tar.gz *.pkg.tar.zst
 
+      - name: Build Kestrel GUI
+        run: |
+          # Compile the Slint/Rust UI into a release binary
+          cd gui-src
+          cargo build --release
+
       - name: Build the ISO
         run: |
           cp -r /usr/share/archiso/configs/releng /tmp/kestrel_profile
           echo -e "\n[chaotic-aur]\nSigLevel = Optional TrustAll\nInclude = /etc/pacman.d/chaotic-mirrorlist" >> /tmp/kestrel_profile/pacman.conf
           echo "zsh" >> /tmp/kestrel_profile/packages.x86_64
 
-          # 1. Setup the installer with the bash bypass
+          # 1. Setup the installer paths
+          mkdir -p /tmp/kestrel_profile/airootfs/usr/local/bin
           mkdir -p /tmp/kestrel_profile/airootfs/root
-          sed 's/\r$//' airootfs/usr/local/bin/install.sh > /tmp/kestrel_profile/airootfs/root/install.sh
-          echo "bash /root/install.sh" >> /tmp/kestrel_profile/airootfs/root/.zlogin
+          
+          # Fix line endings and put install.sh exactly where the Rust backend expects it
+          sed 's/\r$//' airootfs/usr/local/bin/install.sh > /tmp/kestrel_profile/airootfs/usr/local/bin/install.sh
+          
+          # Move the compiled Rust GUI into the live system
+          cp gui-src/target/release/kestrel-gui /tmp/kestrel_profile/airootfs/usr/local/bin/kestrel-gui
+          
+          # Make both executable
+          chmod +x /tmp/kestrel_profile/airootfs/usr/local/bin/install.sh
+          chmod +x /tmp/kestrel_profile/airootfs/usr/local/bin/kestrel-gui
+
+          # Set the GUI to launch automatically on login instead of the raw bash script
+          echo "/usr/local/bin/kestrel-gui" >> /tmp/kestrel_profile/airootfs/root/.zlogin
 
           # 2. Copy the offline cache
           mkdir -p /tmp/kestrel_profile/airootfs/opt
