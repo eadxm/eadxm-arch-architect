@@ -21,10 +21,8 @@ jobs:
           echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist
           pacman -Sy --noconfirm archlinux-keyring
           pacman -Su --noconfirm
-          # Added rustup, cmake, and base-devel to compile the Rust GUI
           pacman -S --noconfirm archiso wget gawk mtools dosfstools erofs-utils squashfs-tools pacman-contrib rustup base-devel cmake pkgconf freetype2 fontconfig libx11
           
-          # Initialize Rust
           rustup default stable
 
       - name: Prepare Offline Package Cache & Dependencies
@@ -38,12 +36,13 @@ jobs:
           pacman -U 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst' 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst' --noconfirm
           echo -e "\n[chaotic-aur]\nInclude = /etc/pacman.d/chaotic-mirrorlist" >> /etc/pacman.conf
 
-          # Downloading all core dependencies (LibreOffice removed)
+          # Base Deployment Engine Packages + 4 Deployed Boot Managers + 3 Main Offline Desktops
           pacman -Syw --cachedir airootfs/opt/offline_cache --dbpath /tmp/empty_db --noconfirm \
-            base linux linux-firmware grub efibootmgr os-prober ntfs-3g networkmanager iwd bluez bluez-utils blueman \
+            base linux-cachyos linux-cachyos-headers linux-firmware scx-scheds efibootmgr os-prober ntfs-3g networkmanager iwd bluez bluez-utils blueman \
             pipewire pipewire-pulse wireplumber brightnessctl flatpak xorg-server sddm sudo zram-generator earlyoom \
             reflector ttf-dejavu ttf-liberation noto-fonts noto-fonts-emoji curl chaotic-keyring chaotic-mirrorlist parted \
-            amd-ucode intel-ucode nvidia nvidia-utils xf86-video-amdgpu intel-media-driver switcheroo-control \
+            amd-ucode intel-ucode nvidia nvidia-utils nvidia-prime xf86-video-amdgpu intel-media-driver \
+            grub refind limine \
             hyprland waybar kitty foot rofi-wayland xdg-desktop-portal-hyprland polkit-kde-agent thunar gvfs \
             plasma-desktop plasma-workspace plasma-nm power-profiles-daemon kscreen konsole dolphin ark kate spectacle discover packagekit-qt6 sddm-kcm \
             xfce4 xfce4-terminal xfce4-goodies \
@@ -56,7 +55,6 @@ jobs:
 
       - name: Build Kestrel GUI
         run: |
-          # Compile the Slint/Rust UI into a release binary
           cd gui-src
           cargo build --release
 
@@ -65,31 +63,23 @@ jobs:
           cp -r /usr/share/archiso/configs/releng /tmp/kestrel_profile
           echo -e "\n[chaotic-aur]\nSigLevel = Optional TrustAll\nInclude = /etc/pacman.d/chaotic-mirrorlist" >> /tmp/kestrel_profile/pacman.conf
           
-          # Inject the necessary Wayland kiosk packages into the live environment
           echo -e "zsh\ncage\nkitty\nmesa\nttf-dejavu\npolkit" >> /tmp/kestrel_profile/packages.x86_64
 
-          # 1. Setup the installer paths
           mkdir -p /tmp/kestrel_profile/airootfs/usr/local/bin
           mkdir -p /tmp/kestrel_profile/airootfs/root
           
-          # Fix line endings and put install.sh exactly where the Rust backend expects it
           sed 's/\r$//' airootfs/usr/local/bin/install.sh > /tmp/kestrel_profile/airootfs/usr/local/bin/install.sh
-          
-          # Move the compiled Rust GUI into the live system
           cp gui-src/target/release/kestrel-gui /tmp/kestrel_profile/airootfs/usr/local/bin/kestrel-gui
           
-          # Make both executable
           chmod +x /tmp/kestrel_profile/airootfs/usr/local/bin/install.sh
           chmod +x /tmp/kestrel_profile/airootfs/usr/local/bin/kestrel-gui
 
-          # 2. Setup Cage Wayland Kiosk Autostart inside .zlogin
           cat << 'EOF' > /tmp/kestrel_profile/airootfs/root/.zlogin
           if [ "$(tty)" = "/dev/tty1" ]; then
               exec cage -s -- /usr/local/bin/kestrel-gui
           fi
           EOF
 
-          # 3. Copy the offline cache
           mkdir -p /tmp/kestrel_profile/airootfs/opt
           cp -r airootfs/opt/offline_cache /tmp/kestrel_profile/airootfs/opt/
 
