@@ -12,9 +12,7 @@ error_handler() {
     echo "=========================================================="
     echo "[FAULT] Command failed with exit code: $exit_code"
     echo "[LOCATION] Failed execution occurred on line: $line_number"
-    echo "----------------------------------------------------------"
     
-    # If we are running in GUI mode, don't trap the user in a terminal prompt
     if [ "$NON_INTERACTIVE" = "1" ]; then
         echo "[INFO] GUI Mode active. Aborting deployment."
         umount -R /mnt &>/dev/null || true
@@ -22,6 +20,7 @@ error_handler() {
         exit "$exit_code"
     fi
 
+    echo "----------------------------------------------------------"
     echo "Options:"
     echo " [1] Force safe unmount and restart system execution"
     echo " [2] Drop into live emergency recovery shell (Zsh)"
@@ -45,15 +44,11 @@ trap 'error_handler $? $LINENO' ERR
 # =====================================================================
 #              GUI / HEADLESS OVERRIDE MODULE
 # =====================================================================
-# When the Rust app runs this, it skips the interactive prompts
 if [ "$NON_INTERACTIVE" = "1" ]; then
     echo "[INFO] Non-Interactive GUI Mode Engaged."
     
-    # 1. Map the Rust UI variables to the Bash variables
     TARGET_DRIVE="${TARGET_DISK}"
-    
-    # 2. Provide sensible auto-defaults for everything the GUI doesn't ask for
-    USER_CHOICE="3"       # 3 = Hard Nuke (Matches the warning in the GUI)
+    USER_CHOICE="3"
     CONFIRM_NUKE="YES"
     
     system_hostname="kestrel"
@@ -61,9 +56,10 @@ if [ "$NON_INTERACTIVE" = "1" ]; then
     user_password="password"
     root_password="password"
     
-    BROWSER_CHOICE="1"    # Zen Browser
-    PERF_CHOICE="Y"       # ZRAM, Fast I/O
-    DE_CHOICE="1"         # Hyprland
+    BROWSER_CHOICE="1"
+    PERF_CHOICE="Y"
+    DE_CHOICE="1" 
+    BOOT_CHOICE="1" # Default to GRUB for headless setup
 fi
 
 clear
@@ -77,8 +73,9 @@ ISO_CACHE="/opt/offline_cache"
 GRUB_OS_PROBER="true" 
 EFI_DIR="/boot/efi"
 ARCH_ROOT=""
+DISPLAY_MANAGER="sddm"
 
-CORE_PKGS="base linux linux-firmware grub efibootmgr os-prober ntfs-3g networkmanager iwd bluez bluez-utils blueman pipewire pipewire-pulse wireplumber brightnessctl flatpak xorg-server sddm sudo zram-generator earlyoom reflector ttf-dejavu ttf-liberation noto-fonts noto-fonts-emoji curl chaotic-keyring chaotic-mirrorlist parted foot git stow qt5-wayland qt6-wayland"
+CORE_PKGS="base linux-cachyos linux-cachyos-headers linux-firmware scx-scheds efibootmgr os-prober ntfs-3g networkmanager iwd bluez bluez-utils blueman pipewire pipewire-pulse wireplumber brightnessctl flatpak xorg-server sudo zram-generator earlyoom reflector ttf-dejavu ttf-liberation noto-fonts noto-fonts-emoji curl chaotic-keyring chaotic-mirrorlist parted foot git stow qt5-wayland qt6-wayland"
 
 if [ -z "$INSTALL_MODE" ]; then
     if [ -d "$ISO_CACHE" ]; then
@@ -110,7 +107,7 @@ if [ -z "$TARGET_DRIVE" ]; then
     echo "----------------------------------------------------------"
 
     while true; do
-        read -r -p "Type your destination installation disk (e.g., /dev/sda, /dev/nvme0n1): " TARGET_DRIVE
+        read -r -p "Type your destination installation disk (e.g., /dev/sda): " TARGET_DRIVE
         if [ -b "$TARGET_DRIVE" ]; then break; else echo "[ERROR] Device path does not exist. Try again."; fi
     done
 fi
@@ -121,7 +118,6 @@ if [[ "$TARGET_DRIVE" =~ [0-9]$ ]]; then PART_PREFIX="p"; else PART_PREFIX=""; f
 # =====================================================================
 #              NETWORK ENGAGEMENT ENGINE
 # =====================================================================
-# Skip CLI Wi-Fi setup if running from the GUI (assume network is managed by live ISO DE)
 if [ "$INSTALL_MODE" = "1" ] && [ "$NON_INTERACTIVE" != "1" ]; then
     while true; do
         clear
@@ -131,12 +127,7 @@ if [ "$INSTALL_MODE" = "1" ] && [ "$NON_INTERACTIVE" != "1" ]; then
         if [ -z "$WIFI_IFACE" ]; then
             read -r -p "No Wi-Fi adapter detected! Switch to OFFLINE mode? (y/N): " ESCAPE_CHOICE
             if [[ "$ESCAPE_CHOICE" =~ ^[Yy]$ ]]; then 
-                if [ -d "$ISO_CACHE" ]; then
-                    INSTALL_MODE="2"; break
-                else
-                    echo "[ERROR] Cannot switch to Offline Mode. No offline cache available. Exiting."
-                    exit 1
-                fi
+                if [ -d "$ISO_CACHE" ]; then INSTALL_MODE="2"; break; else exit 1; fi
             else exit 1; fi
         fi
 
@@ -145,12 +136,7 @@ if [ "$INSTALL_MODE" = "1" ] && [ "$NON_INTERACTIVE" != "1" ]; then
         read -r -p "SSID Selection (or type CANCEL): " WIFI_SSID
         
         if [ "$WIFI_SSID" = "CANCEL" ] || [ -z "$WIFI_SSID" ]; then 
-            if [ -d "$ISO_CACHE" ]; then
-                INSTALL_MODE="2"; break
-            else
-                echo "[ERROR] Network connection is mandatory on the standard Arch ISO. Exiting."
-                exit 1
-            fi
+            if [ -d "$ISO_CACHE" ]; then INSTALL_MODE="2"; break; else exit 1; fi
         fi
         read -r -s -p "Enter Wi-Fi Password: " WIFI_PASS; echo ""
         
@@ -158,7 +144,7 @@ if [ "$INSTALL_MODE" = "1" ] && [ "$NON_INTERACTIVE" != "1" ]; then
         else iwctl --passphrase "$WIFI_PASS" station "$WIFI_IFACE" connect "$WIFI_SSID" || true; fi
         
         sleep 5
-        if ping -c 1 -W 2 archlinux.org &> /dev/null; then break; else read -r -p "Connection failed. Press Enter to retry..."; fi
+        if ping -c 1 -W 2 archlinux.org &> /dev/null; then break; fi
     done
 fi
 
@@ -166,46 +152,36 @@ fi
 #              STORAGE PROVISIONING PATHWAY
 # =====================================================================
 clear
-
-if [ ! -d "$ISO_CACHE" ]; then
-    echo "[INFO] Fetching required partitioning tools for official ISO..."
-    pacman -Sy --noconfirm ntfs-3g parted >/dev/null 2>&1 || true
-fi
+if [ ! -d "$ISO_CACHE" ]; then pacman -Sy --noconfirm ntfs-3g parted >/dev/null 2>&1 || true; fi
 
 if [ -z "$USER_CHOICE" ]; then
     echo "=========================================================="
     echo "          STEP 2: STORAGE PROVISIONING PATHWAY            "
     echo "=========================================================="
-    echo " [1] SAFE MULTI-BOOT - Install alongside existing OS (Manual Partitions)."
+    echo " [1] SAFE MULTI-BOOT - Install alongside existing OS."
     echo " [2] REPLACE LINUX   - Wipe old Linux partition."
-    echo " [3] HARD NUKE       - Wipe the entire drive, clean install."
-    echo " [4] WINDOWS RESIZE  - AUTO-SHRINK Windows C: drive and install Arch."
+    echo " [3] HARD NUKE       - Wipe the entire drive."
+    echo " [4] WINDOWS RESIZE  - Shrink Windows C: drive."
     echo " [5] TARGET NUKE     - Wipe Windows C: drive only."
-    echo " [6] MANUAL ADVANCED - Launch interactive cfdisk."
-    echo " [7] DROP TO SHELL   - Exit to Zsh terminal."
-
+    echo " [6] MANUAL ADVANCED - cfdisk."
+    echo " [7] DROP TO SHELL"
     while true; do read -r -p "Enter your choice (1-7): " USER_CHOICE; [[ "$USER_CHOICE" =~ ^[1-7]$ ]] && break; done
 fi
 
-# UI PROGRESS HOOK: Formatting
 echo "STARTING: Formatting partition tables on $TARGET_DRIVE..."
 
 case $USER_CHOICE in
     1|2|6)
         if [ "$USER_CHOICE" = "6" ]; then cfdisk "$TARGET_DRIVE"; fi
         lsblk "$TARGET_DRIVE" -o NAME,SIZE,TYPE,FSTYPE
-        
         while true; do
             read -r -p "Enter partition for Arch ROOT (e.g., /dev/sda3): " ARCH_ROOT
-            if [ "$ARCH_ROOT" = "$TARGET_DRIVE" ]; then echo "[ERROR] You selected the entire disk! Choose a partition."; continue; fi
-            if [ -b "$ARCH_ROOT" ]; then break; fi
+            if [ -b "$ARCH_ROOT" ] && [ "$ARCH_ROOT" != "$TARGET_DRIVE" ]; then break; fi
         done
-
         if [ -d "/sys/firmware/efi" ]; then
             while true; do
                 read -r -p "Enter EFI partition path (e.g., /dev/sda1): " ARCH_EFI
-                if [ "$ARCH_EFI" = "$TARGET_DRIVE" ]; then echo "[ERROR] Choose a partition, not the disk."; continue; fi
-                if [ -b "$ARCH_EFI" ]; then break; fi
+                if [ -b "$ARCH_EFI" ] && [ "$ARCH_EFI" != "$TARGET_DRIVE" ]; then break; fi
             done
         fi
         
@@ -217,38 +193,28 @@ case $USER_CHOICE in
         if [ "$USER_CHOICE" = "6" ]; then
             read -r -p "Format $ARCH_ROOT to ext4? (y/N): " FORMAT_ROOT
             [[ "$FORMAT_ROOT" =~ ^[Yy]$ ]] && mkfs.ext4 -F "$ARCH_ROOT"
-        else
-            mkfs.ext4 -F "$ARCH_ROOT"
-        fi
+        else mkfs.ext4 -F "$ARCH_ROOT"; fi
         mount "$ARCH_ROOT" "$TARGET"
         
         if [ -d "/sys/firmware/efi" ]; then
             mkdir -p "$TARGET/boot/efi"
             umount "$ARCH_EFI" 2>/dev/null || true
             if [ "$USER_CHOICE" = "6" ]; then
-                read -r -p "Format $ARCH_EFI to FAT32? WARNING: KILLS WINDOWS BOOTLOADER (y/N): " FORMAT_EFI
+                read -r -p "Format $ARCH_EFI to FAT32? (y/N): " FORMAT_EFI
                 [[ "$FORMAT_EFI" =~ ^[Yy]$ ]] && mkfs.vfat -F 32 "$ARCH_EFI"
             fi
             mount -t vfat "$ARCH_EFI" "$TARGET/boot/efi"
-        else
-            mkdir -p "$TARGET/boot"
-        fi
+        else mkdir -p "$TARGET/boot"; fi
         
-        if [ "$USER_CHOICE" = "1" ]; then
-            GRUB_OS_PROBER="false"
-        elif [ "$USER_CHOICE" = "6" ]; then
-            read -r -p "Enable OS Prober to find other operating systems? (Y/n): " MANUAL_PROBER
+        if [ "$USER_CHOICE" = "1" ]; then GRUB_OS_PROBER="false"; elif [ "$USER_CHOICE" = "6" ]; then
+            read -r -p "Enable OS Prober? (Y/n): " MANUAL_PROBER
             if [[ "$MANUAL_PROBER" =~ ^[Nn]$ ]]; then GRUB_OS_PROBER="true"; else GRUB_OS_PROBER="false"; fi
         fi
         ;;
-        
     3)
         echo "====== HARD NUKE: WIPE ENTIRE DRIVE ======"
-        if [ -z "$CONFIRM_NUKE" ]; then
-            read -r -p "🚨 DANGER: This will wipe EVERYTHING on $TARGET_DRIVE. Type 'YES' to confirm: " CONFIRM_NUKE
-        fi
+        if [ -z "$CONFIRM_NUKE" ]; then read -r -p "🚨 DANGER: Type 'YES' to confirm: " CONFIRM_NUKE; fi
         [[ "${CONFIRM_NUKE^^}" != "YES" ]] && exit 1
-        
         sleep 2
         if [ -d "/sys/firmware/efi" ]; then
             sgdisk --zap-all "$TARGET_DRIVE"
@@ -260,6 +226,7 @@ case $USER_CHOICE in
             mount "${TARGET_DRIVE}${PART_PREFIX}2" "$TARGET"
             mkdir -p "$TARGET/boot/efi"
             mount -t vfat "${TARGET_DRIVE}${PART_PREFIX}1" "$TARGET/boot/efi"
+            ARCH_EFI="${TARGET_DRIVE}${PART_PREFIX}1"
         else
             sgdisk --zap-all "$TARGET_DRIVE" &>/dev/null || true
             echo "label: dos" | sfdisk "$TARGET_DRIVE" &>/dev/null
@@ -272,83 +239,56 @@ case $USER_CHOICE in
         fi
         GRUB_OS_PROBER="true"
         ;;
-        
     4)
         echo "====== AUTOMATED WINDOWS RESIZE & DUAL BOOT ======"
-        echo "🚨 WARNING: Shrinking Windows partitions carries data loss risks."
-        echo "   It is HIGHLY recommended to boot Windows and run 'chkdsk /f' first."
-        read -r -p "Do you want to proceed with the resize? (y/N): " PROCEED_RESIZE
+        read -r -p "Proceed with resize? (y/N): " PROCEED_RESIZE
         [[ ! "$PROCEED_RESIZE" =~ ^[Yy]$ ]] && exit 1
-
         lsblk "$TARGET_DRIVE" -o NAME,SIZE,TYPE,FSTYPE
-        
         while true; do
-            read -r -p "Type your Windows C: partition path (e.g., /dev/sda3): " C_DRIVE
-            if [ "$C_DRIVE" = "$TARGET_DRIVE" ]; then echo "[ERROR] You selected the entire disk!"; continue; fi
-            if [ -b "$C_DRIVE" ]; then break; fi
+            read -r -p "Type Windows C: partition (e.g., /dev/sda3): " C_DRIVE
+            if [ -b "$C_DRIVE" ] && [ "$C_DRIVE" != "$TARGET_DRIVE" ]; then break; fi
         done
-        
-        read -r -p "How much space (in GB) do you want to TAKE from Windows for Arch? (e.g., 50): " ARCH_SIZE_GB
-        echo "[INFO] Running NTFS check/repair..."
+        read -r -p "Space (in GB) to TAKE from Windows: " ARCH_SIZE_GB
         ntfsfix "$C_DRIVE" || true
-        
         C_PART_NUM=$(echo "$C_DRIVE" | grep -o '[0-9]\+$')
-        echo "[INFO] Shrinking Windows filesystem by ${ARCH_SIZE_GB}GB..."
         ntfsresize -f -s -${ARCH_SIZE_GB}G "$C_DRIVE"
-        
-        echo "[INFO] Shrinking partition and creating Arch Root..."
         parted -s -a opt "$TARGET_DRIVE" resizepart "$C_PART_NUM" -${ARCH_SIZE_GB}G
         parted -s -a opt "$TARGET_DRIVE" mkpart primary ext4 -${ARCH_SIZE_GB}G 100%
         partprobe "$TARGET_DRIVE"; udevadm settle; sleep 3
-        
         ARCH_ROOT=$(lsblk -ln -p -o NAME "$TARGET_DRIVE" | grep -E "^${TARGET_DRIVE}${PART_PREFIX}[0-9]+" | sort -V | tail -n 1)
-        
-        echo "[INFO] Formatting Arch Root: $ARCH_ROOT"
         mkfs.ext4 -F "$ARCH_ROOT"
         mount "$ARCH_ROOT" "$TARGET"
-        
         if [ -d "/sys/firmware/efi" ]; then
             WIN_EFI=$(lsblk -ln -p -o NAME,FSTYPE "$TARGET_DRIVE" | grep vfat | head -n 1 | awk '{print $1}')
-            if [ -z "$WIN_EFI" ]; then
-                read -r -p "Could not auto-detect EFI. Enter Windows EFI path manually: " WIN_EFI
-            fi
-            
-            echo "[INFO] Mounting Windows EFI safely: $WIN_EFI"
+            if [ -z "$WIN_EFI" ]; then read -r -p "Enter Windows EFI path manually: " WIN_EFI; fi
             mkdir -p "$TARGET/boot/efi"
             fsck.fat -a "$WIN_EFI" || true
             mount -t vfat "$WIN_EFI" "$TARGET/boot/efi"
+            ARCH_EFI="$WIN_EFI"
         fi
         GRUB_OS_PROBER="false" 
         ;;
-        
     5)
         echo "====== TARGET NUKE: ERASE SPECIFIC PARTITION ======"
         lsblk "$TARGET_DRIVE" -o NAME,SIZE,TYPE,FSTYPE
         while true; do
-            read -r -p "Type target Windows partition to WIPE (e.g., /dev/sda3): " C_DRIVE
-            if [ "$C_DRIVE" = "$TARGET_DRIVE" ]; then echo "[ERROR] Do not select the whole disk!"; continue; fi
-            if [ -b "$C_DRIVE" ]; then break; fi
+            read -r -p "Type target Windows partition to WIPE: " C_DRIVE
+            if [ -b "$C_DRIVE" ] && [ "$C_DRIVE" != "$TARGET_DRIVE" ]; then break; fi
         done
-        
         read -r -p "Type 'NUKE' to erase $C_DRIVE: " CONFIRM_NUKE
         [[ "${CONFIRM_NUKE^^}" != "NUKE" ]] && exit 1
-        
         mkfs.ext4 -F "$C_DRIVE"; mount "$C_DRIVE" "$TARGET"
-        
         if [ -d "/sys/firmware/efi" ]; then
             WIN_EFI=$(lsblk -ln -p -o NAME,FSTYPE "$TARGET_DRIVE" | grep vfat | head -n 1 | awk '{print $1}')
             if [ -z "$WIN_EFI" ]; then read -r -p "Enter Windows EFI path manually: " WIN_EFI; fi
-            
             mkdir -p "$TARGET/boot/efi"
             fsck.fat -a "$WIN_EFI" || true
             mount -t vfat "$WIN_EFI" "$TARGET/boot/efi"
+            ARCH_EFI="$WIN_EFI"
         fi
         GRUB_OS_PROBER="false"
         ;;
-    7) 
-        /bin/zsh
-        exit 0 
-        ;;
+    7) /bin/zsh; exit 0 ;;
 esac
 
 # =====================================================================
@@ -358,57 +298,41 @@ clear
 echo "=========================================================="
 echo "              STEP 3: ACCOUNT CREATION                    "
 echo "=========================================================="
-
 if [ -z "$system_hostname" ]; then
-    read -r -p "Enter Hostname for this computer: " system_hostname
+    read -r -p "Enter Hostname: " system_hostname
     system_hostname=$(printf '%s\n' "$system_hostname" | tr -cd 'a-zA-Z0-9-' | tr '[:upper:]' '[:lower:]')
     [ -z "$system_hostname" ] && system_hostname="kestrel-node"
 fi
-
 if [ -z "$username" ]; then
     read -r -p "Enter new username: " username
     username=$(printf '%s\n' "$username" | tr -cd 'a-z0-9_')
     [ -z "$username" ] && username="kestrel_user"
 fi
-
 if [ -z "$user_password" ]; then
-    while true; do 
-        read -r -s -p "Enter secure password for $username: " user_password; echo ""
-        [ -n "$user_password" ] && break
-    done
+    while true; do read -r -s -p "Enter password for $username: " user_password; echo ""; [ -n "$user_password" ] && break; done
 fi
-
 if [ -z "$root_password" ]; then
-    read -r -p "Use the same password for the 'root' administrator account? [Y/n]: " SAME_ROOT
+    read -r -p "Use same password for 'root'? [Y/n]: " SAME_ROOT
     if [[ "$SAME_ROOT" =~ ^[Nn]$ ]]; then
-        while true; do 
-            read -r -s -p "Enter secure password for root: " root_password; echo ""
-            [ -n "$root_password" ] && break
-        done
-    else
-        root_password="$user_password"
-    fi
+        while true; do read -r -s -p "Enter root password: " root_password; echo ""; [ -n "$root_password" ] && break; done
+    else root_password="$user_password"; fi
 fi
 
 # =====================================================================
-#              SOFTWARE CONFIGURATION
+#              SOFTWARE CONFIGURATION & DE MATRIX
 # =====================================================================
 clear
-
 if [ -z "$BROWSER_CHOICE" ]; then
     if [ "$INSTALL_MODE" = "1" ]; then
         echo "Select your primary web browser:"
-        echo " [1] Zen Browser (Default - Recommended)"
-        echo " [2] LibreWolf (Native - Privacy Hardened)"
-        echo " [3] Firefox   (Native - Standard)"
-        echo " [4] Brave     (Native - Chromium Engine)"
-        echo " [5] None"
-        read -r -p "Choice (1-5): " BROWSER_CHOICE
+        echo " [1] Zen Browser (Recommended)"
+        echo " [2] LibreWolf"
+        echo " [3] Firefox"
+        echo " [4] Brave"
+        read -r -p "Choice (1-4): " BROWSER_CHOICE
     else
-        echo "[INFO] Offline Mode Detected."
-        echo "       Defaulting to Zen Browser to ensure web access post-install."
+        echo "[INFO] Offline Mode: Defaulting to Zen Browser."
         BROWSER_CHOICE="1"
-        echo "----------------------------------------------------------"
         sleep 3
     fi
 fi
@@ -420,104 +344,135 @@ case $BROWSER_CHOICE in
     4) CORE_PKGS="$CORE_PKGS brave-bin" ;; 
 esac
 
-if [ -z "$PERF_CHOICE" ]; then
-    read -r -p "Apply Hyper-Performance Matrix? (ZRAM, Fast I/O) [Y/n]: " PERF_CHOICE
-fi
+if [ -z "$PERF_CHOICE" ]; then read -r -p "Apply Hyper-Performance Matrix? (ZRAM, Fast I/O) [Y/n]: " PERF_CHOICE; fi
 
-if grep -q "AuthenticAMD" /proc/cpuinfo; then CORE_PKGS="$CORE_PKGS amd-ucode"; elif grep -q "GenuineIntel" /proc/cpuinfo; then CORE_PKGS="$CORE_PKGS intel-ucode"; fi
+UCODE_IMG=""
+if grep -q "AuthenticAMD" /proc/cpuinfo; then CORE_PKGS="$CORE_PKGS amd-ucode"; UCODE_IMG="amd-ucode.img"; elif grep -q "GenuineIntel" /proc/cpuinfo; then CORE_PKGS="$CORE_PKGS intel-ucode"; UCODE_IMG="intel-ucode.img"; fi
 
-GPU_COUNT=0
-if lspci -vnn | grep -i vga | grep -iq nvidia; then CORE_PKGS="$CORE_PKGS nvidia nvidia-utils"; GPU_COUNT=$((GPU_COUNT + 1)); fi
-if lspci -vnn | grep -i vga | grep -iq amd; then CORE_PKGS="$CORE_PKGS xf86-video-amdgpu"; GPU_COUNT=$((GPU_COUNT + 1)); fi
-if lspci -vnn | grep -i vga | grep -iq intel; then CORE_PKGS="$CORE_PKGS intel-media-driver"; GPU_COUNT=$((GPU_COUNT + 1)); fi
-[ "$GPU_COUNT" -gt 1 ] && CORE_PKGS="$CORE_PKGS switcheroo-control"
+# Universal Hybrid Graphics Detection Mechanism
+HAS_NVIDIA=0; HAS_INTEGRATED=0
+if lspci | grep -iq nvidia; then CORE_PKGS="$CORE_PKGS nvidia nvidia-utils nvidia-prime"; HAS_NVIDIA=1; fi
+if lspci | grep -E -iq "amd|intel"; then HAS_INTEGRATED=1; fi
+if lspci | grep -i vga | grep -iq amd; then CORE_PKGS="$CORE_PKGS xf86-video-amdgpu"; fi
+if lspci | grep -i vga | grep -iq intel; then CORE_PKGS="$CORE_PKGS intel-media-driver"; fi
 
 if [ -z "$DE_CHOICE" ]; then
-    echo "Select your primary Graphical Desktop Workspace:"
-    echo " [1] Hyprland   (Hardware-Accelerated Tiling)"
-    echo " [2] KDE Plasma (Feature-Rich Desktop)"
-    echo " [3] XFCE       (Lightweight Core)"
-    read -r -p "Choice (1-3): " DE_CHOICE
+    if [ "$INSTALL_MODE" = "2" ]; then
+        echo "=== OFFLINE DESKTOP ENVIRONMENT ENVIRONMENT SELECTOR ==="
+        echo " [1] Hyprland   - A visually pleasing dynamic tiling Wayland compositor."
+        echo " [2] KDE Plasma - A comprehensive, flexible, highly customizable desktop environment."
+        echo " [3] XFCE       - Modern, lightweight, stable, traditional drop-down layout."
+        while true; do read -r -p "Choice (1-3): " DE_CHOICE; [[ "$DE_CHOICE" =~ ^[1-3]$ ]] && break; done
+    else
+        echo "=== ONLINE DESKTOP ENVIRONMENT SELECTOR ==="
+        echo " [1] Hyprland   - Visually pleasing Wayland compositor using dynamic tiling."
+        echo " [2] KDE Plasma - Flexible desktop offering multiple styles of menus and KWin."
+        echo " [3] XFCE       - Lightweight and flexible core with traditional desktop flow."
+        echo " [4] GNOME      - User-friendly desktop environment with a modern touch layout."
+        echo " [5] Sway       - Tiling Wayland compositor; dynamic drop-in i3 upgrade."
+        echo " [6] i3-wm      - Popular X11 tiling manager leveraging clean text configurations."
+        echo " [7] Cinnamon   - Traditional desktop paradigm balancing advanced internal features."
+        echo " [8] Niri       - Scrollable tiling Wayland compositor optimizing fluid layout grid."
+        echo " [9] Qtile      - Highly configurable X11/Wayland environment scripted entirely in Python."
+        echo " [10] Wayfire   - Wlroots Wayland engine mixing structural performance aesthetics."
+        echo " [11] bspwm     - Binary space partitioning X11 architecture tracking strict window layouts."
+        echo " [12] Budgie     - Clean and elegant GTK interface prioritizing absolute modern ergonomics."
+        echo " [13] Cosmic     - Modern performance Rust workspace constructed for absolute responsiveness."
+        echo " [14] LXDE       - Fast, lightweight X11 environment tailored heavily for legacy hardware."
+        echo " [15] LXQt       - Blazing fast lightweight environment engineered entirely on the Qt stack."
+        echo " [16] Matede     - Classic GNOME 2 fork tracking legacy desktop layouts natively."
+        echo " [17] Openbox    - Highly custom X11 window manager featuring extensive internal canvas styling."
+        while true; do read -r -p "Choice (1-17): " DE_CHOICE; [[ "$DE_CHOICE" =~ ^[1-9]$|^1[0-7]$ ]] && break; done
+    fi
 fi
 
 case $DE_CHOICE in
-    1) CORE_PKGS="$CORE_PKGS hyprland waybar kitty rofi-wayland xdg-desktop-portal-hyprland polkit-kde-agent thunar gvfs" ;;
-    2) CORE_PKGS="$CORE_PKGS plasma-desktop plasma-workspace plasma-nm power-profiles-daemon kscreen konsole dolphin ark kate spectacle discover packagekit-qt6 sddm-kcm" ;;
-    3) CORE_PKGS="$CORE_PKGS xfce4 xfce4-terminal xfce4-goodies" ;;
+    1) CORE_PKGS="$CORE_PKGS hyprland waybar kitty rofi-wayland xdg-desktop-portal-hyprland polkit-kde-agent thunar gvfs sddm" ;;
+    2) CORE_PKGS="$CORE_PKGS plasma-desktop plasma-workspace plasma-nm power-profiles-daemon kscreen konsole dolphin ark kate spectacle discover packagekit-qt6 sddm-kcm sddm" ;;
+    3) CORE_PKGS="$CORE_PKGS xfce4 xfce4-terminal xfce4-goodies sddm" ;;
+    4) CORE_PKGS="$CORE_PKGS gnome gnome-tweaks gdm"; DISPLAY_MANAGER="gdm" ;;
+    5) CORE_PKGS="$CORE_PKGS sway swaybg swaylock swayidle waybar kitty rofi-wayland xdg-desktop-portal-wlr polkit-kde-agent thunar gvfs sddm" ;;
+    6) CORE_PKGS="$CORE_PKGS i3-wm i3status i3lock dmenu kitty picom nitrogen polkit-gnome thunar gvfs sddm" ;;
+    7) CORE_PKGS="$CORE_PKGS cinnamon nemo-fileroller gnome-terminal sddm" ;;
+    8) CORE_PKGS="$CORE_PKGS niri waybar kitty rofi-wayland xdg-desktop-portal-gnome polkit-kde-agent thunar gvfs sddm" ;;
+    9) CORE_PKGS="$CORE_PKGS qtile kitty rofi-wayland xdg-desktop-portal-wlr polkit-kde-agent thunar gvfs sddm" ;;
+    10) CORE_PKGS="$CORE_PKGS wayfire wayfire-plugins-extra kitty rofi-wayland xdg-desktop-portal-wlr polkit-kde-agent thunar gvfs sddm" ;;
+    11) CORE_PKGS="$CORE_PKGS bspwm sxhkd kitty dmenu picom nitrogen polkit-gnome thunar gvfs sddm" ;;
+    12) CORE_PKGS="$CORE_PKGS budgie-desktop sddm" ;;
+    13) CORE_PKGS="$CORE_PKGS cosmic-session sddm" ;;
+    14) CORE_PKGS="$CORE_PKGS lxde-common lxsession openbox sddm" ;;
+    15) CORE_PKGS="$CORE_PKGS lxqt lxqt-session sddm" ;;
+    16) CORE_PKGS="$CORE_PKGS mate mate-extra sddm" ;;
+    17) CORE_PKGS="$CORE_PKGS openbox obconf tint2 kitty dmenu nitrogen sddm" ;;
+esac
+
+# =====================================================================
+#              BOOT MANAGER CONFIGURATION STAGE
+# =====================================================================
+clear
+if [ -z "$BOOT_CHOICE" ]; then
+    echo "=== BOOT MANAGER CONFIGURATION MATRIX ==="
+    echo " [1] GRUB          - Flexible multi-boot loader; supports auto BTRFS snapshot lists."
+    echo " [2] systemd-boot  - Light minimalist EFI manager tracking kernel slots in loader.conf."
+    echo " [3] rEFInd        - Rich graphical shell automatically identifying boot options."
+    echo " [4] Limine        - Modern lightning-fast system deployed cleanly via limine.conf."
+    while true; do read -r -p "Choice (1-4): " BOOT_CHOICE; [[ "$BOOT_CHOICE" =~ ^[1-4]$ ]] && break; done
+fi
+
+# Add explicit runtime target applications per chosen manager
+case $BOOT_CHOICE in
+    1) CORE_PKGS="$CORE_PKGS grub" ;;
+    2) : ;; # systemd-boot is built into systemd core natively
+    3) CORE_PKGS="$CORE_PKGS refind" ;;
+    4) CORE_PKGS="$CORE_PKGS limine" ;;
 esac
 
 # =====================================================================
 #              INSTALLATION EXECUTION
 # =====================================================================
 clear
-
-# Enable live color formatting and PARALLEL DOWNLOADS for the deployment engine
 sed -i 's/^#Color/Color\nILoveCandy/' /etc/pacman.conf 2>/dev/null || true
 sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 10/' /etc/pacman.conf 2>/dev/null || true
 
-# UI PROGRESS HOOK: Pacstrap
 echo "STARTING: Running pacstrap (Installing base system)..."
 
 if [ "$INSTALL_MODE" = "2" ]; then
-    echo "[INFO] Deploying OFFLINE using local repository cache... "
-    
     cat << EOF > /tmp/offline-pacman.conf
 [options]
 Architecture = auto
 SigLevel = Optional TrustAll
-
 [kestrel-offline]
 SigLevel = Optional TrustAll
 Server = file://$ISO_CACHE/
 EOF
-
     mkdir -p "$TARGET/var/cache/pacman/pkg"
     cp -n "$ISO_CACHE"/* "$TARGET/var/cache/pacman/pkg/" 2>/dev/null || true
-    
-    # Run pacstrap visibly in the foreground to catch errors
     pacstrap -C /tmp/offline-pacman.conf -K "$TARGET" --noconfirm $CORE_PKGS
-    
-    echo -e "\n[SUCCESS] Base system deployed."
     cp /etc/pacman.conf "$TARGET/etc/pacman.conf"
 else
-    echo "[INFO] Deploying ONLINE... "
     timedatectl set-ntp true
-    
-    echo "[INFO] Optimizing mirrorlist for maximum download speeds..."
     if command -v reflector &> /dev/null; then
         reflector --latest 10 --sort rate --save /etc/pacman.d/mirrorlist &>/dev/null || echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist
-    else
-        echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist
-    fi
+    else echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist; fi
     
-    echo "[INFO] Injecting Chaotic-AUR repository for third-party binaries..."
     pacman-key --init >/dev/null 2>&1 || true
     pacman-key --populate archlinux >/dev/null 2>&1 || true
-    
     pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com >/dev/null 2>&1
     pacman-key --lsign-key 3056513887B78AEB >/dev/null 2>&1
     pacman -U 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst' 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst' --noconfirm >/dev/null 2>&1
-    
     echo -e "\n[chaotic-aur]\nInclude = /etc/pacman.d/chaotic-mirrorlist" >> /etc/pacman.conf
     
     trap - ERR 
     DOWNLOAD_SUCCESS=0
     while [ "$DOWNLOAD_SUCCESS" -eq 0 ]; do
         rm -f "$TARGET/var/lib/pacman/db.lck" 2>/dev/null || true
-        # Run pacstrap visibly in the foreground
-        if pacstrap -K "$TARGET" --noconfirm $CORE_PKGS; then 
-            DOWNLOAD_SUCCESS=1
-        else 
-            if [ "$NON_INTERACTIVE" = "1" ]; then
-                echo "[ERROR] Pacstrap failed in GUI Mode."
-                exit 1
-            else
+        if pacstrap -K "$TARGET" --noconfirm $CORE_PKGS; then DOWNLOAD_SUCCESS=1; else 
+            if [ "$NON_INTERACTIVE" = "1" ]; then exit 1; else
                 read -r -p "Install failed! Retry? (1=Yes, 2=Reboot): " FAIL_CHOICE; [ "$FAIL_CHOICE" = "2" ] && { umount -R "$TARGET"; reboot; }
             fi
         fi
     done
     trap 'error_handler $? $LINENO' ERR 
-    echo -e "\n[SUCCESS] Base system deployed."
 fi
 
 mkdir -p "$TARGET/etc/pacman.d"
@@ -525,16 +480,11 @@ echo -e "\n[chaotic-aur]\nInclude = /etc/pacman.d/chaotic-mirrorlist" >> "$TARGE
 genfstab -U "$TARGET" >> "$TARGET/etc/fstab"
 
 # =====================================================================
-#              CHROOT PROVISIONING 
+#              CHROOT SYSTEM CONFIGURATION & TARGET INITIALIZATION
 # =====================================================================
-# UI PROGRESS HOOK: Bootloader
-echo "STARTING: Configuring bootloader (grub)..."
-
 arch-chroot "$TARGET" useradd -m -G wheel -s /bin/bash "$username"
-
 printf '%s:%s\n' "$username" "$user_password" | arch-chroot "$TARGET" chpasswd
 printf '%s:%s\n' "root" "$root_password" | arch-chroot "$TARGET" chpasswd
-
 printf '%s\n' "$system_hostname" > "$TARGET/etc/hostname"
 echo -e "127.0.0.1 localhost\n::1 localhost\n127.0.1.1 ${system_hostname}.localdomain ${system_hostname}" > "$TARGET/etc/hosts"
 
@@ -558,13 +508,26 @@ if [ "$INSTALL_MODE" = "1" ]; then
     echo -e "[device]\nwifi.backend=iwd" > "$TARGET/etc/NetworkManager/conf.d/wifi_backend.conf"
 fi
 
-arch-chroot "$TARGET" systemctl enable sddm.service NetworkManager.service iwd.service bluetooth.service systemd-timesyncd.service
+arch-chroot "$TARGET" systemctl enable ${DISPLAY_MANAGER}.service NetworkManager.service iwd.service bluetooth.service systemd-timesyncd.service scx.service
 arch-chroot "$TARGET" systemctl mask systemd-time-wait-sync.service
-
-[[ "$CORE_PKGS" == *"switcheroo-control"* ]] && arch-chroot "$TARGET" systemctl enable switcheroo-control.service || true
 
 mkdir -p "$TARGET/etc/bluetooth"
 echo -e "[Policy]\nAutoEnable=true" > "$TARGET/etc/bluetooth/main.conf"
+
+# Native Universal Hybrid Graphics Configuration Hook
+if [ "$HAS_NVIDIA" -eq 1 ] && [ "$HAS_INTEGRATED" -eq 1 ]; then
+    echo "[INFO] Injecting hardware hybrid graphics modules settings..."
+    mkdir -p "$TARGET/etc/modprobe.d"
+    echo "options nvidia \"NVreg_DynamicPowerManagement=0x02\"" > "$TARGET/etc/modprobe.d/nvidia.conf"
+    
+    mkdir -p "$TARGET/etc/udev/rules.d"
+    cat << 'EOF' > "$TARGET/etc/udev/rules.d/80-nvidia-pm.rules"
+# Enable runtime power management for NVIDIA graphics controller
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", ATTR{power/control}="auto"
+# Enable runtime power management for NVIDIA audio controller
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x040300", ATTR{power/control}="auto"
+EOF
+fi
 
 cat << 'EOF' >> "$TARGET/home/$username/.bashrc"
 alias ls='ls --color=auto'
@@ -579,36 +542,79 @@ if [[ "$PERF_CHOICE" =~ ^[Yy]$ || -z "$PERF_CHOICE" ]]; then
     arch-chroot "$TARGET" systemctl enable earlyoom.service || true
     sed -i 's/#MAKEFLAGS="-j2"/MAKEFLAGS="-j$(nproc)"/' "$TARGET/etc/makepkg.conf"
     sed -i 's/^COMPRESSZST=.*/COMPRESSZST=(zstd -c -T0 -)/' "$TARGET/etc/makepkg.conf"
-    
-    # THE FIX: Safely uncomment and inject under [options] using sed
     sed -i 's/^#Color/Color\nILoveCandy/' "$TARGET/etc/pacman.conf" 2>/dev/null || true
     sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 10/' "$TARGET/etc/pacman.conf" 2>/dev/null || true
-    
     echo -e "[zram0]\nzram-size = ram / 2\ncompression-algorithm = zstd" > "$TARGET/etc/systemd/zram-generator.conf"
     if [ "$(lsblk -nd -o ROTA "$TARGET_DRIVE" | head -n 1)" = "0" ]; then arch-chroot "$TARGET" systemctl enable fstrim.timer || true; fi
 fi
 
-echo "GRUB_DISABLE_OS_PROBER=$GRUB_OS_PROBER" >> "$TARGET/etc/default/grub"
-if [ -d "/sys/firmware/efi" ]; then
-    arch-chroot "$TARGET" grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=KestrelArch --recheck
-else
-    arch-chroot "$TARGET" grub-install --target=i386-pc "$TARGET_DRIVE" --recheck
-fi
-arch-chroot "$TARGET" grub-mkconfig -o /boot/grub/grub.cfg
+# =====================================================================
+#              CHROOT PROVISIONING: BOOT MANAGERS DEPLOYMENT
+# =====================================================================
+echo "STARTING: Installing and deploying selected boot loader framework..."
+ROOT_UUID=$(blkid -s UUID -o value "$(lsblk -ln -p -o NAME "$TARGET_DRIVE" | grep -E "^${TARGET_DRIVE}${PART_PREFIX}[0-9]+" | sort -V | tail -n 1)")
+
+case $BOOT_CHOICE in
+    1)
+        # GRUB
+        echo "GRUB_DISABLE_OS_PROBER=$GRUB_OS_PROBER" >> "$TARGET/etc/default/grub"
+        sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="nowatchdog zswap.enabled=0 quiet splash mitigations=off"/' "$TARGET/etc/default/grub"
+        if [ -d "/sys/firmware/efi" ]; then
+            arch-chroot "$TARGET" grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=KestrelArch --recheck
+        else
+            arch-chroot "$TARGET" grub-install --target=i386-pc "$TARGET_DRIVE" --recheck
+        fi
+        arch-chroot "$TARGET" grub-mkconfig -o /boot/grub/grub.cfg
+        ;;
+    2)
+        # systemd-boot
+        arch-chroot "$TARGET" bootctl install
+        echo -e "default arch.conf\ntimeout 5" > "$TARGET/boot/loader/loader.conf"
+        
+        {
+            echo "title Kestrel Arch"
+            echo "linux /vmlinuz-linux-cachyos"
+            [ -n "$UCODE_IMG" ] && echo "initrd /${UCODE_IMG}"
+            echo "initrd /initramfs-linux-cachyos.img"
+            echo "options root=UUID=${ROOT_UUID} rw nowatchdog zswap.enabled=0 quiet splash mitigations=off"
+        } > "$TARGET/boot/loader/entries/arch.conf"
+        ;;
+    3)
+        # rEFInd
+        arch-chroot "$TARGET" refind-install
+        UCODE_STR=""
+        [ -n "$UCODE_IMG" ] && UCODE_STR="initrd=${UCODE_IMG} "
+        echo "\"Boot using default options\" \"root=UUID=${ROOT_UUID} rw ${UCODE_STR}initrd=initramfs-linux-cachyos.img nowatchdog zswap.enabled=0 quiet splash mitigations=off\"" > "$TARGET/boot/refind_linux.conf"
+        ;;
+    4)
+        # Limine
+        mkdir -p "$TARGET/boot/EFI/BOOT"
+        cp "$TARGET/usr/share/limine/BOOTX64.EFI" "$TARGET/boot/EFI/BOOT/BOOTX64.EFI"
+        UCODE_STR=""
+        [ -n "$UCODE_IMG" ] && UCODE_STR="module_path: boot():/${UCODE_IMG}\n    "
+        
+        cat << EOF > "$TARGET/boot/limine.conf"
+timeout: 5
+default_entry: 1
+:Kestrel Arch
+    protocol: linux
+    kernel_path: boot():/vmlinuz-linux-cachyos
+    ${UCODE_STR}module_path: boot():/initramfs-linux-cachyos.img
+    cmdline: root=UUID=${ROOT_UUID} rw nowatchdog zswap.enabled=0 quiet splash mitigations=off
+EOF
+        if [ ! -d "/sys/firmware/efi" ]; then
+            arch-chroot "$TARGET" limine deploy "$TARGET_DRIVE" || true
+        fi
+        ;;
+esac
 
 echo "=========================================================="
 echo "   KESTREL ARCH DEPLOYED! REBOOTING IN 5 SECONDS...       "
 echo "=========================================================="
 sleep 5
 
-# Ensure we don't reboot the live system if running in GUI background thread
 if [ "$NON_INTERACTIVE" = "1" ]; then
-    trap - ERR
-    umount -R "$TARGET" 2>/dev/null || true
-    echo "[INFO] GUI Installation Complete. Handing control back to UI."
-    exit 0
+    trap - ERR; umount -R "$TARGET" 2>/dev/null || true; exit 0
 fi
 
-trap - ERR
-umount -R "$TARGET" 2>/dev/null || true
-reboot || true
+trap - ERR; umount -R "$TARGET" 2>/dev/null || true; reboot || true
