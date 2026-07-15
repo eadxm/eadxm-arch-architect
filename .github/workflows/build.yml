@@ -55,7 +55,6 @@ jobs:
 
       - name: Build Kestrel GUI
         run: |
-          # FIXED: Navigating to the exact nested path shown in your repo
           cd airootfs/gui-src
           cargo build --release
 
@@ -64,20 +63,30 @@ jobs:
           cp -r /usr/share/archiso/configs/releng /tmp/kestrel_profile
           echo -e "\n[chaotic-aur]\nSigLevel = Optional TrustAll\nInclude = /etc/pacman.d/chaotic-mirrorlist" >> /tmp/kestrel_profile/pacman.conf
           
-          echo -e "zsh\ncage\nkitty\nmesa\nttf-dejavu\npolkit" >> /tmp/kestrel_profile/packages.x86_64
+          echo -e "zsh\ncage\nkitty\nmesa\nttf-dejavu\npolkit\npciutils" >> /tmp/kestrel_profile/packages.x86_64
 
           mkdir -p /tmp/kestrel_profile/airootfs/usr/local/bin
           mkdir -p /tmp/kestrel_profile/airootfs/root
           
           sed 's/\r$//' airootfs/usr/local/bin/install.sh > /tmp/kestrel_profile/airootfs/usr/local/bin/install.sh
           
-          # FIXED: Grabbing the compiled binary from the nested target folder
           cp airootfs/gui-src/target/release/kestrel-gui /tmp/kestrel_profile/airootfs/usr/local/bin/kestrel-gui
           
           chmod +x /tmp/kestrel_profile/airootfs/usr/local/bin/install.sh
           chmod +x /tmp/kestrel_profile/airootfs/usr/local/bin/kestrel-gui
 
           cat << 'EOF' > /tmp/kestrel_profile/airootfs/root/.zlogin
+          export XDG_RUNTIME_DIR=/run/user/$(id -u)
+          
+          # Smart Detection: Evaluate environment to prevent Wayland crashes
+          IS_VM=$(systemd-detect-virt -q && echo 1 || echo 0)
+          HAS_NVIDIA=$(lspci | grep -iE "vga.*nvidia|3d.*nvidia" >/dev/null 2>&1 && echo 1 || echo 0)
+
+          if [ "$IS_VM" = "1" ] || [ "$HAS_NVIDIA" = "1" ]; then
+              export WLR_NO_HARDWARE_CURSORS=1
+              export WLR_RENDERER=pixman
+          fi
+          
           if [ "$(tty)" = "/dev/tty1" ]; then
               exec cage -s -- /usr/local/bin/kestrel-gui
           fi
