@@ -4,9 +4,19 @@ set -eE -o pipefail
 # =====================================================================
 #              FAIL-SAFE TELEMETRY AND ERROR TRAPPING ENGINE
 # =====================================================================
+STATUS_FILE="/tmp/kestrel_status"
+
+update_status() {
+    echo "$1" > "$STATUS_FILE"
+}
+
 error_handler() {
     local exit_code=$1
     local line_number=$2
+    
+    # Bridge the error to the Rust GUI
+    update_status "ERROR: Failed at line $line_number (Code: $exit_code). Check installation logs."
+    
     echo -e "\n=========================================================="
     echo "         CRITICAL FAULT DETECTED BY KESTREL         "
     echo "=========================================================="
@@ -45,6 +55,7 @@ trap 'error_handler $? $LINENO' ERR
 #              GUI / HEADLESS OVERRIDE MODULE
 # =====================================================================
 if [ "$NON_INTERACTIVE" = "1" ]; then
+    update_status "PROGRESS: Initializing non-interactive GUI deployment..."
     echo "[INFO] Non-Interactive GUI Mode Engaged."
     
     # 1. Drive & Mode
@@ -77,7 +88,7 @@ fi
 
 clear
 echo "=========================================================="
-echo "               KESTREL ARCH DEPLOYMENT ENGINE               "
+echo "                KESTREL ARCH DEPLOYMENT ENGINE                "
 echo "=========================================================="
 echo ""
 
@@ -91,6 +102,7 @@ DISPLAY_MANAGER="sddm"
 CORE_PKGS="base linux-cachyos linux-cachyos-headers linux-firmware scx-scheds switcheroo-control efibootmgr os-prober ntfs-3g networkmanager iwd bluez bluez-utils blueman pipewire pipewire-pulse wireplumber brightnessctl flatpak xorg-server sudo zram-generator earlyoom reflector ttf-dejavu ttf-liberation noto-fonts noto-fonts-emoji curl chaotic-keyring chaotic-mirrorlist parted foot git stow qt5-wayland qt6-wayland"
 
 if [ -z "$INSTALL_MODE" ]; then
+    update_status "PROGRESS: Determining installation mode..."
     if [ -d "$ISO_CACHE" ]; then
         echo "Choose your connection architecture:"
         echo " [1] ONLINE INSTALL - Download the absolute latest packages."
@@ -132,6 +144,7 @@ if [[ "$TARGET_DRIVE" =~ [0-9]$ ]]; then PART_PREFIX="p"; else PART_PREFIX=""; f
 #              NETWORK ENGAGEMENT ENGINE
 # =====================================================================
 if [ "$INSTALL_MODE" = "1" ] && [ "$NON_INTERACTIVE" != "1" ]; then
+    update_status "PROGRESS: Establishing Network Connection..."
     while true; do
         clear
         if ping -c 1 -W 2 archlinux.org &> /dev/null; then echo "[SUCCESS] Active network connection detected!"; sleep 2; break; fi
@@ -165,6 +178,7 @@ fi
 #              STORAGE PROVISIONING PATHWAY
 # =====================================================================
 clear
+update_status "PROGRESS: Preparing Storage and Partitioning..."
 if [ ! -d "$ISO_CACHE" ]; then pacman -Sy --noconfirm ntfs-3g parted >/dev/null 2>&1 || true; fi
 
 if [ -z "$USER_CHOICE" ]; then
@@ -320,6 +334,7 @@ esac
 # =====================================================================
 #              ACCOUNT CREATION
 # =====================================================================
+update_status "PROGRESS: Configuring User Accounts..."
 clear
 echo "=========================================================="
 echo "              STEP 3: ACCOUNT CREATION                    "
@@ -347,6 +362,7 @@ fi
 # =====================================================================
 #              SOFTWARE CONFIGURATION & DE MATRIX
 # =====================================================================
+update_status "PROGRESS: Configuring Software Matrix..."
 clear
 if [ -z "$BROWSER_CHOICE" ]; then
     if [ "$INSTALL_MODE" = "1" ]; then
@@ -400,8 +416,8 @@ if [ -z "$DE_CHOICE" ]; then
         echo " [7] Cinnamon   - Traditional desktop paradigm balancing advanced internal features."
         echo " [8] Niri       - Scrollable tiling Wayland compositor optimizing fluid layout grid."
         echo " [9] Qtile      - Highly configurable X11/Wayland environment scripted entirely in Python."
-        echo " [10] Wayfire   - Wlroots Wayland engine mixing structural performance aesthetics."
-        echo " [11] bspwm     - Binary space partitioning X11 architecture tracking strict window layouts."
+        echo " [10] Wayfire    - Wlroots Wayland engine mixing structural performance aesthetics."
+        echo " [11] bspwm      - Binary space partitioning X11 architecture tracking strict window layouts."
         echo " [12] Budgie     - Clean and elegant GTK interface prioritizing absolute modern ergonomics."
         echo " [13] Cosmic     - Modern performance Rust workspace constructed for absolute responsiveness."
         echo " [14] LXDE       - Fast, lightweight X11 environment tailored heavily for legacy hardware."
@@ -457,6 +473,7 @@ esac
 #              INSTALLATION EXECUTION
 # =====================================================================
 clear
+update_status "PROGRESS: Installing Base System (Pacstrap)..."
 sed -i 's/^#Color/Color\nILoveCandy/' /etc/pacman.conf 2>/dev/null || true
 sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 10/' /etc/pacman.conf 2>/dev/null || true
 
@@ -508,6 +525,7 @@ genfstab -U "$TARGET" >> "$TARGET/etc/fstab"
 # =====================================================================
 #              CHROOT SYSTEM CONFIGURATION & TARGET INITIALIZATION
 # =====================================================================
+update_status "PROGRESS: Configuring Base System and Chroot..."
 arch-chroot "$TARGET" useradd -m -G wheel -s /bin/bash "$username"
 printf '%s:%s\n' "$username" "$user_password" | arch-chroot "$TARGET" chpasswd
 printf '%s:%s\n' "root" "$root_password" | arch-chroot "$TARGET" chpasswd
@@ -578,6 +596,7 @@ fi
 # =====================================================================
 #              CHROOT PROVISIONING: BOOT MANAGERS DEPLOYMENT
 # =====================================================================
+update_status "PROGRESS: Installing Bootloader Framework..."
 echo "STARTING: Installing and deploying selected boot loader framework..."
 ROOT_UUID=$(blkid -s UUID -o value "$(lsblk -ln -p -o NAME "$TARGET_DRIVE" | grep -E "^${TARGET_DRIVE}${PART_PREFIX}[0-9]+" | sort -V | tail -n 1)")
 
@@ -641,6 +660,7 @@ EOF
         ;;
 esac
 
+update_status "COMPLETE"
 echo "=========================================================="
 echo "   KESTREL ARCH DEPLOYED! REBOOTING IN 5 SECONDS...       "
 echo "=========================================================="
