@@ -1,7 +1,8 @@
-import { Button, ComboBox, ProgressIndicator, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Button, ComboBox, ProgressIndicator, VerticalBox, HorizontalBox, LineEdit, CheckBox } from "std-widgets.slint";
 
 export global InstallerLogic {
-    callback start_install(string, string, string);
+    // Now accepts all 11 variables required by main.rs
+    callback start_install(string, string, string, string, string, string, string, string, string, string, string);
     callback launch_terminal();
     callback update_system();
     
@@ -11,17 +12,31 @@ export global InstallerLogic {
 
 export component InstallerWindow inherits Window {
     title: "Kestrel OS Installer";
-    width: 650px;
-    height: 550px;
-    background: #1e1e2e; // Professional dark background
+    width: 700px;  // Slightly wider for text inputs
+    height: 600px; // Slightly taller for the wizard flow
+    background: #1e1e2e;
     default-font-family: "Noto Sans, Roboto, sans-serif";
 
     in-out property <int> active_step: 0;
     
-    // RUST INTEGRATION: Rust will inject the real hard drives into this array!
     in property <[string]> available_disks: ["Scanning hardware..."];
     
+    // --- STATE MANAGEMENT ---
+    
+    // Step 1: Storage
     property <string> selected_disk: root.available_disks[0];
+    property <string> selected_mode: "2. Offline (Fast, Local Cache)";
+    property <string> selected_part: "3. HARD NUKE - Wipe the entire drive";
+    
+    // Step 2: Accounts
+    property <string> in_hostname: "kestrel";
+    property <string> in_username: "kestrel_user";
+    property <string> in_password: "";
+    property <string> in_root_password: "";
+    
+    // Step 3: Software
+    property <string> selected_browser: "1. Zen Browser (Recommended)";
+    property <bool> perf_enabled: true;
     property <string> selected_de: "1. Hyprland";
     property <string> selected_boot: "4. Limine";
 
@@ -34,13 +49,15 @@ export component InstallerWindow inherits Window {
             text: "Kestrel OS";
             font-size: 28px;
             font-weight: 700;
-            color: #cba6f7; // Signature Kestrel Purple
+            color: #cba6f7;
             horizontal-alignment: center;
         }
 
         Rectangle { height: 1px; background: #313244; }
 
-        // --- STEP 0: Dashboard ---
+        // ==========================================
+        // STEP 0: Dashboard
+        // ==========================================
         if (root.active_step == 0) : VerticalBox {
             alignment: center;
             spacing: 20px;
@@ -84,14 +101,15 @@ export component InstallerWindow inherits Window {
             }
         }
 
-        // --- STEP 1: Configuration Screen ---
+        // ==========================================
+        // STEP 1: Storage & Strategy
+        // ==========================================
         if (root.active_step == 1) : VerticalBox {
             alignment: center;
             spacing: 15px;
             padding-left: 40px;
             padding-right: 40px;
             
-            // Dynamic Disk Selection
             VerticalBox {
                 spacing: 5px;
                 Text { text: "Target Drive:"; font-size: 13px; font-weight: 600; color: #bac2de; }
@@ -102,11 +120,109 @@ export component InstallerWindow inherits Window {
                     height: 35px;
                 }
             }
-            
-            // DE Selection
+
             VerticalBox {
                 spacing: 5px;
-                Text { text: "Desktop Environment:"; font-size: 13px; font-weight: 600; color: #bac2de; padding-top: 5px; }
+                Text { text: "Installation Mode:"; font-size: 13px; font-weight: 600; color: #bac2de; padding-top: 5px; }
+                ComboBox {
+                    model: ["1. Online (Download Latest)", "2. Offline (Fast, Local Cache)"];
+                    current-value: root.selected_mode;
+                    selected(val) => { root.selected_mode = val; }
+                    height: 35px;
+                }
+            }
+            
+            VerticalBox {
+                spacing: 5px;
+                Text { text: "Partitioning Strategy:"; font-size: 13px; font-weight: 600; color: #bac2de; padding-top: 5px; }
+                ComboBox {
+                    model: ["1. SAFE MULTI-BOOT (Alongside OS)", "2. REPLACE LINUX (Wipe Linux Partitions)", "3. HARD NUKE (Wipe Entire Drive)", "4. WINDOWS RESIZE (Shrink C: Drive)", "5. TARGET NUKE (Wipe C: Drive Only)"];
+                    current-value: root.selected_part;
+                    selected(val) => { root.selected_part = val; }
+                    height: 35px;
+                }
+            }
+            
+            HorizontalBox {
+                padding-top: 20px;
+                alignment: center;
+                spacing: 15px;
+                Button { text: "Back"; height: 40px; clicked => { root.active_step = 0; } }
+                Button { text: "Next: Accounts"; primary: true; height: 40px; clicked => { root.active_step = 2; } }
+            }
+        }
+
+        // ==========================================
+        // STEP 2: Account Creation
+        // ==========================================
+        if (root.active_step == 2) : VerticalBox {
+            alignment: center;
+            spacing: 15px;
+            padding-left: 60px;
+            padding-right: 60px;
+
+            VerticalBox {
+                spacing: 5px;
+                Text { text: "System Hostname:"; font-size: 13px; color: #bac2de; }
+                LineEdit { text: root.in_hostname; edited(val) => { root.in_hostname = val; } height: 35px; }
+            }
+
+            VerticalBox {
+                spacing: 5px;
+                Text { text: "Username:"; font-size: 13px; color: #bac2de; }
+                LineEdit { text: root.in_username; edited(val) => { root.in_username = val; } height: 35px; }
+            }
+
+            VerticalBox {
+                spacing: 5px;
+                Text { text: "User Password:"; font-size: 13px; color: #bac2de; }
+                LineEdit { input-type: password; text: root.in_password; edited(val) => { root.in_password = val; } height: 35px; }
+            }
+
+            VerticalBox {
+                spacing: 5px;
+                Text { text: "Root Password (leave blank to match User):"; font-size: 13px; color: #bac2de; }
+                LineEdit { input-type: password; text: root.in_root_password; edited(val) => { root.in_root_password = val; } height: 35px; }
+            }
+
+            HorizontalBox {
+                padding-top: 20px;
+                alignment: center;
+                spacing: 15px;
+                Button { text: "Back"; height: 40px; clicked => { root.active_step = 1; } }
+                Button { 
+                    text: "Next: Software"; 
+                    primary: true; 
+                    height: 40px; 
+                    enabled: root.in_username != "" && root.in_password != ""; // Prevent empty passwords
+                    clicked => { root.active_step = 3; } 
+                }
+            }
+        }
+
+        // ==========================================
+        // STEP 3: Software & Deployment
+        // ==========================================
+        if (root.active_step == 3) : VerticalBox {
+            alignment: center;
+            spacing: 15px;
+            padding-left: 40px;
+            padding-right: 40px;
+            
+            VerticalBox {
+                spacing: 5px;
+                Text { text: "Default Browser:"; font-size: 13px; font-weight: 600; color: #bac2de; }
+                ComboBox {
+                    model: ["1. Zen Browser", "2. LibreWolf", "3. Firefox", "4. Brave"];
+                    current-value: root.selected_browser;
+                    selected(val) => { root.selected_browser = val; }
+                    height: 35px;
+                }
+            }
+
+            VerticalBox {
+                spacing: 5px;
+                Text { text: "Desktop Environment:"; font-size: 13px; font-weight: 600; color: #bac2de; }
                 ComboBox {
                     model: ["1. Hyprland", "2. KDE Plasma", "3. XFCE", "4. GNOME", "5. Sway", "6. i3-wm", "7. Cinnamon", "8. Niri", "9. Qtile", "10. Wayfire", "11. bspwm", "12. Budgie", "13. Cosmic", "14. LXDE", "15. LXQt", "16. Mate", "17. Openbox"];
                     current-value: root.selected_de;
@@ -115,10 +231,9 @@ export component InstallerWindow inherits Window {
                 }
             }
 
-            // Bootloader Selection
             VerticalBox {
                 spacing: 5px;
-                Text { text: "Boot Manager:"; font-size: 13px; font-weight: 600; color: #bac2de; padding-top: 5px; }
+                Text { text: "Boot Manager:"; font-size: 13px; font-weight: 600; color: #bac2de; }
                 ComboBox {
                     model: ["1. GRUB", "2. systemd-boot", "3. rEFInd", "4. Limine"];
                     current-value: root.selected_boot;
@@ -126,39 +241,56 @@ export component InstallerWindow inherits Window {
                     height: 35px;
                 }
             }
+            
+            CheckBox {
+                text: "Apply Hyper-Performance Matrix (ZRAM, Fast I/O)";
+                checked: root.perf_enabled;
+                toggled => { root.perf_enabled = !root.perf_enabled; }
+            }
 
             Text {
-                text: "WARNING: All data on the target drive will be permanently erased.";
-                color: #f38ba8; // Warning Red
+                text: "WARNING: Review your partitioning choice. Proceeding will write to the disk.";
+                color: #f38ba8;
                 font-size: 12px;
                 font-weight: 700;
                 horizontal-alignment: center;
-                padding-top: 20px;
+                padding-top: 10px;
             }
             
             HorizontalBox {
-                padding-top: 15px;
+                padding-top: 10px;
                 alignment: center;
                 spacing: 15px;
-                Button {
-                    text: "Back";
-                    height: 40px;
-                    clicked => { root.active_step = 0; }
-                }
+                Button { text: "Back"; height: 40px; clicked => { root.active_step = 2; } }
                 Button {
                     text: "Begin Deployment";
                     primary: true;
                     height: 40px;
                     clicked => { 
-                        root.active_step = 2; 
-                        InstallerLogic.start_install(root.selected_disk, root.selected_de, root.selected_boot);
+                        root.active_step = 4; // Move to Progress Screen
+                        // Send all 11 variables to Rust!
+                        InstallerLogic.start_install(
+                            root.selected_disk,
+                            root.selected_mode,
+                            root.selected_part,
+                            root.in_hostname,
+                            root.in_username,
+                            root.in_password,
+                            root.in_root_password,
+                            root.selected_browser,
+                            root.perf_enabled ? "Y" : "N",
+                            root.selected_de,
+                            root.selected_boot
+                        );
                     }
                 }
             }
         }
 
-        // --- STEP 2: Live Progress Screen ---
-        if (root.active_step == 2) : VerticalBox {
+        // ==========================================
+        // STEP 4: Live Progress Screen
+        // ==========================================
+        if (root.active_step == 4) : VerticalBox {
             alignment: center;
             spacing: 20px;
             padding-left: 50px;
@@ -185,8 +317,10 @@ export component InstallerWindow inherits Window {
             }
         }
 
-        // --- STEP 3: Complete Screen ---
-        if (root.active_step == 3) : VerticalBox {
+        // ==========================================
+        // STEP 99: Complete Screen
+        // ==========================================
+        if (root.active_step == 99) : VerticalBox {
             alignment: center;
             spacing: 15px;
             
@@ -194,11 +328,11 @@ export component InstallerWindow inherits Window {
                 text: "Deployment Successful";
                 font-size: 22px;
                 font-weight: 700;
-                color: #a6e3a1; // Success Green
+                color: #a6e3a1; 
                 horizontal-alignment: center;
             }
             Text {
-                text: "Kestrel OS has been installed to your drive. You may now reboot.";
+                text: "Kestrel OS has been installed. You may now reboot.";
                 color: #bac2de;
                 font-size: 14px;
                 horizontal-alignment: center;
