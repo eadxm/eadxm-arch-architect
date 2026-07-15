@@ -36,12 +36,10 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     }
 
-    // Fallback if no drives are found
     if disks.is_empty() {
         disks.push("No drives found!".into());
     }
 
-    // Push the scanned disks into the Slint UI array
     let disks_model = Rc::new(VecModel::from(disks));
     ui.set_available_disks(ModelRc::from(disks_model.clone()));
 
@@ -76,23 +74,43 @@ fn main() -> Result<(), slint::PlatformError> {
     // ==========================================
     let ui_handle = ui.as_weak();
     
-    ui.global::<InstallerLogic>().on_start_install(move |target_disk, selected_de, selected_boot| {
+    // The callback now expects all 11 configuration points from the GUI
+    ui.global::<InstallerLogic>().on_start_install(move |
+        target_disk, install_mode, part_strategy, 
+        hostname, username, password, root_password, 
+        browser, perf, selected_de, selected_boot
+    | {
         let ui_handle = ui_handle.clone();
         
-        // CLEANUP: Extract pure values for the Bash script
-        // Changes "/dev/sda - 256G" -> "/dev/sda"
+        // --- DATA CLEANUP ---
         let pure_disk_path = target_disk.as_str().split_whitespace().next().unwrap_or("").to_string();
+        let mode_num = install_mode.as_str().split('.').next().unwrap_or("2").to_string();
+        let part_num = part_strategy.as_str().split('.').next().unwrap_or("3").to_string();
         
-        // Changes "1. Hyprland" -> "1"
+        // Pass account info exactly as typed
+        let host_str = hostname.as_str().to_string();
+        let user_str = username.as_str().to_string();
+        let pass_str = password.as_str().to_string();
+        let root_pass_str = root_password.as_str().to_string();
+        
+        let browser_num = browser.as_str().split('.').next().unwrap_or("1").to_string();
+        let perf_char = if perf.as_str().starts_with('Y') { "Y" } else { "N" };
         let de_num = selected_de.as_str().split('.').next().unwrap_or("1").to_string();
-        
-        // Changes "4. Limine" -> "4"
         let boot_num = selected_boot.as_str().split('.').next().unwrap_or("1").to_string();
         
         thread::spawn(move || {
             let mut child = Command::new("bash")
                 .arg("/usr/local/bin/install.sh") 
+                // --- INJECTING THE FULL CONFIGURATION ---
                 .env("TARGET_DISK", &pure_disk_path)
+                .env("INSTALL_MODE", &mode_num)
+                .env("PARTITION_STRATEGY", &part_num)
+                .env("GUI_HOSTNAME", &host_str)
+                .env("GUI_USERNAME", &user_str)
+                .env("GUI_PASSWORD", &pass_str)
+                .env("GUI_ROOT_PASSWORD", &root_pass_str)
+                .env("BROWSER_CHOICE", &browser_num)
+                .env("PERF_CHOICE", &perf_char)
                 .env("DE_CHOICE", &de_num)
                 .env("BOOT_CHOICE", &boot_num)
                 .env("NON_INTERACTIVE", "1") 
@@ -138,9 +156,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     if let Some(ui) = ui_handle.upgrade() {
                         if status.success() {
                             ui.global::<InstallerLogic>().set_progress(1.0);
-                            ui.set_active_step(3); 
+                            ui.set_active_step(99); // Moved "Success" screen to an end state number
                         } else {
-                            ui.global::<InstallerLogic>().set_status_text("Installation failed! Check terminal.".into());
+                            ui.global::<InstallerLogic>().set_status_text("Installation failed! Check console output.".into());
                         }
                     }
                 }
