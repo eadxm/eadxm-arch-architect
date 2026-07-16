@@ -95,8 +95,8 @@ jobs:
           cp -r airootfs/opt/offline_cache /tmp/kestrel_profile/airootfs/opt/
 
           mkdir -p out/
-          # 3. FIX: Simply set -z to the algorithm name. The level is handled by the config above.
-          mkarchiso -v -w /tmp/archiso-tmp -o out/ -z zstd /tmp/kestrel_profile/
+          # 3. FIX: Simply removed the -z flag entirely. Compression logic handles it automatically.
+          mkarchiso -v -w /tmp/archiso-tmp -o out/ /tmp/kestrel_profile/
 
       - name: Upload ISO Artifact
         uses: actions/upload-artifact@v4
