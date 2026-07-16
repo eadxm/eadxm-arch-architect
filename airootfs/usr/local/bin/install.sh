@@ -465,6 +465,14 @@ if [ -z "$BOOT_CHOICE" ]; then
     while true; do read -r -p "Choice (1-4): " BOOT_CHOICE; [[ "$BOOT_CHOICE" =~ ^[1-4]$ ]] && break; done
 fi
 
+# FAIL-SAFE: Force GRUB if user selects systemd-boot on a Legacy BIOS machine
+if [ ! -d "/sys/firmware/efi" ] && [ "$BOOT_CHOICE" = "2" ]; then
+    echo "[WARNING] systemd-boot requires UEFI. Falling back to GRUB for Legacy BIOS."
+    update_status "WARNING: systemd-boot requires UEFI. Enforcing GRUB fallback..."
+    BOOT_CHOICE="1"
+    sleep 2
+fi
+
 # Add explicit runtime target applications per chosen manager
 case $BOOT_CHOICE in
     1) CORE_PKGS="$CORE_PKGS grub" ;;
